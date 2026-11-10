@@ -1,5 +1,10 @@
 # JARVIS AI Video Studio — roadmap
 
+## Implemented in 0.9.1
+- Added an FFmpeg-powered audio waveform endpoint with bounded processing and compact amplitude samples
+- Added a waveform preview to the video player panel, including handling for videos without audio
+- Added a regression test for silent-video waveform responses
+
 ## Implemented in 0.9.0
 - Added draggable IN/OUT trim handles to every multi-clip timeline row
 - Kept numeric per-clip trim fields and synchronized them with the visual handles
