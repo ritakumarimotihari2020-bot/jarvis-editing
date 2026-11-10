@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MEDIA = ROOT / "media"
 MEDIA.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="JARVIS AI Video Studio API", version="0.8.0")
+app = FastAPI(title="JARVIS AI Video Studio API", version="0.9.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -58,7 +58,7 @@ def srt_time(seconds: float) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.8.0"}
+    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.9.1"}
 
 
 @app.post("/api/upload")
@@ -90,6 +90,51 @@ def video_info(filename: str):
         "audio_codec": audio_stream.get("codec_name"),
         "has_audio": bool(audio_stream),
         "size_bytes": source.stat().st_size,
+    }
+
+
+@app.get("/api/video/{filename}/waveform")
+def audio_waveform(filename: str, points: int = 240):
+    """Return a compact audio amplitude envelope for timeline visualization."""
+    source = get_media_file(filename)
+    points = min(600, max(32, points))
+    info = run_ffprobe(source)
+    streams = info.get("streams", [])
+    audio_stream = next((item for item in streams if item.get("codec_type") == "audio"), None)
+    if not audio_stream:
+        return {"filename": source.name, "has_audio": False, "duration": 0, "samples": []}
+    duration = float(info.get("format", {}).get("duration") or audio_stream.get("duration") or 0)
+    if duration <= 0:
+        raise HTTPException(status_code=422, detail="Audio duration is unavailable")
+    # Bound processing time and response size for long uploads.
+    analysed_duration = min(duration, 300.0)
+    command = [
+        "ffmpeg", "-v", "error", "-i", str(source), "-t", str(analysed_duration),
+        "-vn", "-ac", "1", "-ar", str(points * 20), "-f", "s16le", "pipe:1",
+    ]
+    try:
+        result = subprocess.run(command, check=True, capture_output=True, timeout=180)
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
+    except subprocess.CalledProcessError as exc:
+        detail = exc.stderr.decode("utf-8", errors="replace")[-1000:]
+        raise HTTPException(status_code=422, detail=detail or "Audio waveform extraction failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Audio waveform extraction timed out")
+    import array
+    samples = array.array("h")
+    samples.frombytes(result.stdout[:len(result.stdout) - (len(result.stdout) % 2)])
+    if not samples:
+        return {"filename": source.name, "has_audio": True, "duration": analysed_duration, "samples": [0] * points}
+    stride = max(1, len(samples) // points)
+    peaks = []
+    for index in range(points):
+        chunk = samples[index * stride:(index + 1) * stride] if index < points - 1 else samples[index * stride:]
+        peaks.append(round(max((abs(value) for value in chunk), default=0) / 32768, 3))
+    return {
+        "filename": source.name, "has_audio": True,
+        "duration": round(analysed_duration, 3), "truncated": duration > analysed_duration,
+        "samples": peaks,
     }
 
 
