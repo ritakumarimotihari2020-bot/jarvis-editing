@@ -259,7 +259,7 @@ function App() {
     <section className="hero"><p className="eyebrow">YOUR IDEAS. YOUR EDIT.</p><h2>Make every second<br/><em>count.</em></h2><p className="sub">Upload, inspect, trim, use Hindi voice commands, and generate AI subtitles.</p></section>
     <section className="workspace">
       <div className="panel preview"><div className="panel-head"><span>01 / PREVIEW</span><span>LIVE CANVAS</span></div>
-        {video ? <video ref={playerRef} controls playsInline onLoadedMetadata={handleTimelinePreviewLoaded} onTimeUpdate={handleTimelinePreviewTime} onEnded={() => { if (timelinePreviewing) advanceTimelinePreview(); }} src={timelinePreviewing && timelineFiles[timelinePreviewIndex] ? API + timelineFiles[timelinePreviewIndex].url : `${API}${video.url}`} /> : <label className="drop"><input type="file" accept="video/*" onChange={e => setFile(e.target.files?.[0] || null)} /><span className="upload-icon">＋</span><strong>{file ? file.name : 'Choose your video'}</strong><small>MP4, MOV, MKV, WEBM or AVI</small></label>}
+        {video ? <video key={timelinePreviewing ? "timeline-" + timelinePreviewIndex : "single-preview"} ref={playerRef} controls playsInline onLoadedMetadata={handleTimelinePreviewLoaded} onTimeUpdate={handleTimelinePreviewTime} onEnded={() => { if (timelinePreviewing) advanceTimelinePreview(); }} src={timelinePreviewing && timelineFiles[timelinePreviewIndex] ? API + timelineFiles[timelinePreviewIndex].url : `${API}${video.url}`} /> : <label className="drop"><input type="file" accept="video/*" onChange={e => setFile(e.target.files?.[0] || null)} /><span className="upload-icon">＋</span><strong>{file ? file.name : 'Choose your video'}</strong><small>MP4, MOV, MKV, WEBM or AVI</small></label>}
         {!video && <button className="primary" disabled={!file || busy} onClick={upload}>{busy ? 'UPLOADING…' : 'UPLOAD & ANALYSE'}</button>}
         {video && <button className="quiet" onClick={() => { setVideo(null); setInfo(null); setFile(null); setCaption(null); setMessage('Choose a video to begin editing.'); }}>Choose another video</button>}
         {info && <div className="metadata"><span>{info.width} × {info.height}</span><span>{info.duration.toFixed(1)} sec</span><span>{info.video_codec || 'Video'}</span><span>{info.has_audio ? 'Audio ✓' : 'No audio'}</span></div>}
@@ -281,7 +281,7 @@ function App() {
         <p className="notice" role="status">{message}</p>
       </div>
     </section>
-    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.6.0</span></footer>
+    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.7.0</span></footer>
   </main>;
 }
 
