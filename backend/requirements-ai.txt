@@ -1,0 +1,2 @@
+# Optional AI caption dependencies (install after backend/requirements.txt)
+openai-whisper==20250625
