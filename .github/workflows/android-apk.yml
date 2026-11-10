@@ -26,18 +26,22 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Validate backend URL
+      - name: Resolve backend URL
+        id: backend
         env:
-          VITE_API_URL: ${{ inputs.api_url || vars.VITE_API_URL }}
+          INPUT_API_URL: ${{ inputs.api_url }}
+          REPOSITORY_API_URL: ${{ vars.VITE_API_URL }}
         run: |
+          VITE_API_URL="${INPUT_API_URL:-$REPOSITORY_API_URL}"
           if [ -z "$VITE_API_URL" ]; then
-            echo "::error::Set the repository variable VITE_API_URL to your public HTTPS FastAPI backend URL."
-            exit 1
+            VITE_API_URL="https://your-api.example.com"
+            echo "::warning::No backend URL supplied. APK will build with a placeholder and backend features will not connect until a real HTTPS URL is configured."
           fi
           case "$VITE_API_URL" in
             https://*) ;;
-            *) echo "::error::VITE_API_URL must start with https://"; exit 1 ;;
+            *) echo "::error::Backend URL must start with https://"; exit 1 ;;
           esac
+          echo "api_url=$VITE_API_URL" >> "$GITHUB_OUTPUT"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -57,7 +61,7 @@ jobs:
       - name: Build web app for Android
         working-directory: frontend
         env:
-          VITE_API_URL: ${{ inputs.api_url || vars.VITE_API_URL }}
+          VITE_API_URL: ${{ steps.backend.outputs.api_url }}
         run: npm run build:mobile
 
       - name: Generate Android project
