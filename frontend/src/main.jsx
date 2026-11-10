@@ -26,7 +26,7 @@ function App() {
   const [overlayPosition, setOverlayPosition] = useState('bottom');
   const [overlayFontSize, setOverlayFontSize] = useState(42);
   const [fadeIn, setFadeIn] = useState(1);
-  const [fadeOut, setFadeOut] = useState(1);
+  const [fadeOut, setFadeOut] = useState(1);\n  const [timelineTransition, setTimelineTransition] = useState('fade');\n  const [transitionDuration, setTransitionDuration] = useState(0.75);
   const [timelineFiles, setTimelineFiles] = useState([]);
   const [timelinePreviewing, setTimelinePreviewing] = useState(false);
   const [timelinePreviewIndex, setTimelinePreviewIndex] = useState(0);
@@ -137,6 +137,32 @@ function App() {
       setVideo({ ...body, original_name: 'JARVIS Timeline Export' });
       setInfo(null); setCaption(null); setCaptionPreview('');
       setMessage(body.clips + ' clips successfully joined. Player menu se video save karein.');
+    } catch (err) { setMessage(err.message); }
+    finally { setBusy(false); }
+  }
+
+
+  async function exportTimelineWithTransitions() {
+    if (timelineFiles.length < 2) return;
+    const invalid = timelineFiles.find(item => !Number.isFinite(Number(item.trimStart)) || !Number.isFinite(Number(item.trimEnd)) || Number(item.trimStart) < 0 || Number(item.trimEnd) <= Number(item.trimStart) || Number(item.trimEnd) > Number(item.duration) + 0.05);
+    if (invalid) { setMessage('Har clip ka Start aur End uski duration ke andar rakhein.'); return; }
+    if (timelineFiles.some(item => Number(item.trimEnd) - Number(item.trimStart) <= transitionDuration)) {
+      setMessage('Har selected clip transition duration se lambi honi chahiye.'); return;
+    }
+    setBusy(true); setMessage('Smooth transitions render ho rahe hain…');
+    try {
+      const res = await fetch(API + '/api/export/timeline-transition', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clips: timelineFiles.map(item => ({ filename: item.filename, start: Number(item.trimStart), end: Number(item.trimEnd) })),
+          transition: timelineTransition, transition_duration: transitionDuration
+        })
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || 'Transition export failed');
+      setVideo({ ...body, original_name: 'JARVIS Transition Export' });
+      setInfo(null); setCaption(null); setCaptionPreview('');
+      setMessage(body.clips + ' clips with ' + body.transition + ' transitions exported successfully.');
     } catch (err) { setMessage(err.message); }
     finally { setBusy(false); }
   }
@@ -408,13 +434,18 @@ function App() {
                 <input aria-label={'Clip ' + (index + 1) + ' drag IN handle'} className="timeline-range timeline-range-start" type="range" min="0" max={Math.max(0, Number(clip.trimEnd) - 0.1)} step="0.1" value={Math.min(Math.max(0, Number(clip.trimEnd) - 0.1), Math.max(0, Number(clip.trimStart) || 0))} disabled={busy} onChange={e => setTimelineFiles(current => current.map((item, i) => i === index ? { ...item, trimStart: Number(e.target.value) } : item))} />
                 <input aria-label={'Clip ' + (index + 1) + ' drag OUT handle'} className="timeline-range timeline-range-end" type="range" min={Math.min(Number(clip.duration), Number(clip.trimStart) + 0.1)} max={clip.duration} step="0.1" value={Math.min(Number(clip.duration), Math.max(Number(clip.trimStart) + 0.1, Number(clip.trimEnd)))} disabled={busy} onChange={e => setTimelineFiles(current => current.map((item, i) => i === index ? { ...item, trimEnd: Number(e.target.value) } : item))} />
               </div><small>Selected: {Math.max(0, Number(clip.trimEnd) - Number(clip.trimStart)).toFixed(1)} sec</small></div><span className="timeline-actions"><button type="button" className="quiet" disabled={busy || index === 0} onClick={() => moveTimelineClip(index, -1)}>↑</button><button type="button" className="quiet" disabled={busy || index === timelineFiles.length - 1} onClick={() => moveTimelineClip(index, 1)}>↓</button><button type="button" className="quiet" disabled={busy} onClick={() => setTimelineFiles(current => current.filter((_, i) => i !== index))}>×</button></span></li>)}</ol>}
+          <div className="transition-controls">
+            <label className="overlay-label">TRANSITION STYLE<select value={timelineTransition} onChange={e => setTimelineTransition(e.target.value)} disabled={busy}><option value="fade">Fade</option><option value="dissolve">Dissolve</option><option value="wipeleft">Wipe left</option><option value="wiperight">Wipe right</option><option value="slideleft">Slide left</option><option value="slideright">Slide right</option><option value="circleopen">Circle open</option></select></label>
+            <label className="volume-control">TRANSITION DURATION · {transitionDuration.toFixed(2)}s<input type="range" min="0.1" max="3" step="0.05" value={transitionDuration} onChange={e => setTransitionDuration(Number(e.target.value))} disabled={busy || timelineFiles.length < 2} /></label>
+          </div>
           <button className="quiet" disabled={busy || timelineFiles.length === 0} onClick={startTimelinePreview}>▶ PREVIEW TIMELINE</button>
-          <button className="primary" disabled={busy || timelineFiles.length < 2} onClick={exportTimeline}>EXPORT {timelineFiles.length} CLIPS AS ONE VIDEO</button>
+          <button className="quiet" disabled={busy || timelineFiles.length < 2} onClick={exportTimeline}>EXPORT {timelineFiles.length} CLIPS (HARD CUT)</button>
+          <button className="primary" disabled={busy || timelineFiles.length < 2} onClick={exportTimelineWithTransitions}>EXPORT WITH {timelineTransition.toUpperCase()} TRANSITIONS</button>
         </div>
         <p className="notice" role="status">{message}</p>
       </div>
     </section>
-    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.12.0</span></footer>
+    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.13.0</span></footer>
   </main>;
 }
 
