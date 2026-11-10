@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MEDIA = ROOT / "media"
 MEDIA.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="JARVIS AI Video Studio API", version="0.4.0")
+app = FastAPI(title="JARVIS AI Video Studio API", version="0.4.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -58,7 +58,7 @@ def srt_time(seconds: float) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.4.0"}
+    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.4.1"}
 
 
 @app.post("/api/upload")
