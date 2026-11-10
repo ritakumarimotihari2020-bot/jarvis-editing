@@ -65,3 +65,5 @@
 .text-overlay-box textarea:focus,.overlay-label select:focus{outline:1px solid #5ce5d4;border-color:#5ce5d4}
 
 .project-box .overlay-label input{display:block;width:100%;margin-top:9px;padding:12px;border:1px solid #35455e;border-radius:8px;background:#0b1321;color:#edf2ff;font:14px Manrope}.project-box .overlay-label input:focus{outline:1px solid #5ce5d4;border-color:#5ce5d4}.project-box .quiet{width:100%}
+
+.export-job{margin:16px 0;padding:14px;background:#0b1321;border:1px solid #2b3b53;border-radius:9px}.export-job-head{display:flex;justify-content:space-between;gap:8px;color:#5ce5d4;font:10px 'DM Mono',monospace}.export-job-head span{color:#aab6ca}.export-progress{height:8px;margin:12px 0 8px;background:#26344a;border-radius:8px;overflow:hidden}.export-progress i{display:block;height:100%;background:#5ce5d4;transition:width .3s}.export-job small{color:#8493ad;font-size:11px}
