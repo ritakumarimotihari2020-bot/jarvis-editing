@@ -26,7 +26,9 @@ function App() {
   const [overlayPosition, setOverlayPosition] = useState('bottom');
   const [overlayFontSize, setOverlayFontSize] = useState(42);
   const [fadeIn, setFadeIn] = useState(1);
-  const [fadeOut, setFadeOut] = useState(1);\n  const [timelineTransition, setTimelineTransition] = useState('fade');\n  const [transitionDuration, setTransitionDuration] = useState(0.75);
+  const [fadeOut, setFadeOut] = useState(1);
+  const [timelineTransition, setTimelineTransition] = useState('fade');
+  const [transitionDuration, setTransitionDuration] = useState(0.75);
   const [timelineFiles, setTimelineFiles] = useState([]);
   const [timelinePreviewing, setTimelinePreviewing] = useState(false);
   const [timelinePreviewIndex, setTimelinePreviewIndex] = useState(0);
