@@ -19,6 +19,9 @@ function App() {
   const [captionLanguage, setCaptionLanguage] = useState('auto');
   const [captionPreview, setCaptionPreview] = useState('');
   const [waveform, setWaveform] = useState(null);
+  const [musicFile, setMusicFile] = useState(null);
+  const [musicVolume, setMusicVolume] = useState(25);
+  const [originalVolume, setOriginalVolume] = useState(100);
   const [timelineFiles, setTimelineFiles] = useState([]);
   const [timelinePreviewing, setTimelinePreviewing] = useState(false);
   const [timelinePreviewIndex, setTimelinePreviewIndex] = useState(0);
@@ -249,6 +252,32 @@ function App() {
   }
 
 
+  async function exportAudioMix() {
+    if (!video || !musicFile) return;
+    setBusy(true); setMessage('Background music mix ho raha hai…');
+    try {
+      const uploadData = new FormData();
+      uploadData.append('file', musicFile);
+      const uploadRes = await fetch(`${API}/api/upload/audio`, { method: 'POST', body: uploadData });
+      const audio = await uploadRes.json();
+      if (!uploadRes.ok) throw new Error(audio.detail || 'Music upload failed');
+      const res = await fetch(`${API}/api/export/audio-mix`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: video.filename, audio_filename: audio.filename,
+          music_volume: musicVolume / 100, original_volume: originalVolume / 100
+        })
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || 'Audio mix export failed');
+      setVideo({ ...body, original_name: 'Video with background music' });
+      setInfo(null); setCaption(null); setCaptionPreview('');
+      setMessage('Background music successfully mix ho gaya. Player menu se MP4 save karein.');
+    } catch (err) { setMessage(err.message); }
+    finally { setBusy(false); }
+  }
+
+
   async function burnCaptions() {
     if (!video || !caption) return;
     setBusy(true); setMessage('Burning subtitles into your video…');
@@ -297,6 +326,13 @@ function App() {
         <button className="primary" disabled={!video || busy} onClick={exportTrim}>{busy ? 'WORKING…' : '✦  EXPORT VIDEO'}</button>
         <div className="voice-box"><h3>03 / JARVIS VOICE COMMAND</h3><p className="hint">Try “start time 5”, “duration 20”, “export video” or “अपलोड”</p><button className="quiet" disabled={busy || listening} onClick={startListening}>{listening ? 'LISTENING…' : '🎙️  SPEAK COMMAND'}</button>{commandText && <small>Heard: {commandText}</small>}</div>
         <div className="voice-box"><h3>04 / AI AUTO CAPTIONS</h3><p className="hint">Whisper creates a downloadable SRT subtitle file.</p><select value={captionLanguage} onChange={e => setCaptionLanguage(e.target.value)}><option value="auto">Detect language</option><option value="hi">Hindi</option><option value="en">English</option></select><button className="quiet" disabled={!video || busy} onClick={generateCaptions}>{busy ? 'PROCESSING…' : 'GENERATE CAPTIONS'}</button>{caption && <><a className="caption-link" href={`${API}${caption.url}`} download>Download subtitles (.srt) · {caption.segments} lines</a><pre className="caption-preview">{captionPreview.slice(0, 1800)}</pre><button className="primary" disabled={busy} onClick={burnCaptions}>BURN CAPTIONS INTO VIDEO</button></>}</div>
+
+        <div className="voice-box music-box"><h3>06 / BACKGROUND MUSIC MIXER</h3><p className="hint">MP3, WAV, M4A, AAC, OGG ya FLAC upload karein. Music video ki length tak loop hoga.</p>
+          <label className="music-picker">♫ {musicFile ? musicFile.name : 'CHOOSE BACKGROUND MUSIC'}<input type="file" accept=".mp3,.wav,.aac,.m4a,.ogg,.flac,audio/*" disabled={busy} onChange={e => setMusicFile(e.target.files?.[0] || null)} /></label>
+          <label className="volume-control">MUSIC VOLUME · {musicVolume}%<input type="range" min="0" max="200" step="5" value={musicVolume} onChange={e => setMusicVolume(Number(e.target.value))} disabled={busy} /></label>
+          <label className="volume-control">ORIGINAL VIDEO AUDIO · {originalVolume}%<input type="range" min="0" max="200" step="5" value={originalVolume} onChange={e => setOriginalVolume(Number(e.target.value))} disabled={busy} /></label>
+          <button className="primary" disabled={!video || !musicFile || busy} onClick={exportAudioMix}>MIX MUSIC & EXPORT MP4</button>
+        </div>
 
         <div className="voice-box timeline-box"><h3>05 / MULTI-CLIP TIMELINE</h3><p className="hint">Multiple videos add karein, order badlein aur ek MP4 export karein. Maximum 20 clips.</p>
           <label className="timeline-add">＋ ADD VIDEO CLIPS<input type="file" accept="video/*" multiple disabled={busy} onChange={e => { addTimelineFiles(e.target.files); e.target.value = ''; }} /></label>
