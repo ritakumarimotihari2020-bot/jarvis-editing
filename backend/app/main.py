@@ -318,10 +318,10 @@ def export_text_overlay(payload: dict):
     text_file.write_text(overlay_text, encoding="utf-8")
     def escape_filter_path(path: Path) -> str:
         return str(path.resolve()).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
-    font_file = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+    font_file = Path("/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf")
     drawtext = (
         f"drawtext=fontfile='{escape_filter_path(font_file)}':"
-        f"textfile='{escape_filter_path(text_file)}':fontcolor=white:fontsize={font_size}:"
+        f"textfile='{escape_filter_path(text_file)}':fontcolor=white:fontsize={font_size}:expansion=none:"
         f"x={positions[position].split(':', 1)[0]}:y={positions[position].split(':', 1)[1]}:"
         "box=1:boxcolor=black@0.55:boxborderw=12"
     )
