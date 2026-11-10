@@ -177,6 +177,60 @@ def burn_captions(payload: dict):
         raise HTTPException(status_code=504, detail="Subtitle export timed out")
     return {"filename": output_name, "url": f"/media/{output_name}"}
 
+
+@app.post("/api/export/timeline")
+def export_timeline(payload: dict):
+    """Normalize clips to a common format, then join them in timeline order."""
+    names = payload.get("filenames")
+    if not isinstance(names, list) or not 2 <= len(names) <= 20:
+        raise HTTPException(status_code=400, detail="Timeline needs between 2 and 20 clips")
+    sources = [get_media_file(name) for name in names]
+    job = uuid.uuid4().hex[:10]
+    normalized = []
+    concat_list = MEDIA / f"timeline-{job}.txt"
+    output_name = f"jarvis-timeline-{job}.mp4"
+    output = MEDIA / output_name
+    try:
+        for index, source in enumerate(sources):
+            info = run_ffprobe(source)
+            streams = info.get("streams", [])
+            if not any(item.get("codec_type") == "video" for item in streams):
+                raise HTTPException(status_code=422, detail=f"{source.name} has no video stream")
+            has_audio = any(item.get("codec_type") == "audio" for item in streams)
+            normalized_file = MEDIA / f"timeline-{job}-{index}.mp4"
+            command = ["ffmpeg", "-y", "-i", str(source)]
+            if not has_audio:
+                command += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
+            command += [
+                "-map", "0:v:0", "-map", "0:a:0" if has_audio else "1:a:0",
+                "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                "-c:a", "aac", "-ar", "44100", "-ac", "2", "-shortest",
+                "-movflags", "+faststart", str(normalized_file),
+            ]
+            subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
+            normalized.append(normalized_file)
+        concat_list.write_text(
+            "".join(f"file '{path.name}'\\n" for path in normalized), encoding="utf-8"
+        )
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
+             "-c", "copy", "-movflags", "+faststart", str(output)],
+            check=True, capture_output=True, text=True, timeout=1800,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=422, detail=exc.stderr[-1500:] or "Timeline export failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Timeline export timed out")
+    finally:
+        concat_list.unlink(missing_ok=True)
+        for path in normalized:
+            path.unlink(missing_ok=True)
+    return {"filename": output_name, "url": f"/media/{output_name}", "clips": len(sources)}
+
+
 @app.post("/api/export/trim")
 def trim_video(payload: dict):
     source = get_media_file(payload.get("filename", ""))
