@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 function App() {
+  const playerRef = useRef(null);
   const [file, setFile] = useState(null);
   const [video, setVideo] = useState(null);
   const [info, setInfo] = useState(null);
@@ -40,11 +41,16 @@ function App() {
 
   async function exportTrim() {
     if (!video) return;
+    const trimStart = Number(start), trimDuration = Number(duration);
+    if (!Number.isFinite(trimStart) || !Number.isFinite(trimDuration) || trimStart < 0 || trimDuration <= 0 || (info?.duration && trimStart + trimDuration > info.duration + 0.05)) {
+      setMessage('Trim range invalid hai. Start aur duration video ki length ke andar rakhein.');
+      return;
+    }
     setBusy(true); setMessage('Rendering your edit…');
     try {
       const res = await fetch(`${API}/api/export/trim`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: video.filename, start: Number(start), duration: Number(duration) })
+        body: JSON.stringify({ filename: video.filename, start: trimStart, duration: trimDuration })
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.detail || 'Export failed');
@@ -53,6 +59,25 @@ function App() {
       setMessage('Your edited video is ready. Use the video player menu to save it.');
     } catch (err) { setMessage(err.message); }
     finally { setBusy(false); }
+  }
+
+  function setTrimStartToPlayhead() {
+    const current = playerRef.current?.currentTime;
+    if (!Number.isFinite(current)) return;
+    setStart(current.toFixed(1));
+    setMessage(`Trim start set to ${current.toFixed(1)} seconds.`);
+  }
+
+  function setTrimEndToPlayhead() {
+    const current = playerRef.current?.currentTime;
+    if (!Number.isFinite(current)) return;
+    const nextDuration = current - Number(start || 0);
+    if (nextDuration <= 0) {
+      setMessage('End point, start point ke baad hona chahiye.');
+      return;
+    }
+    setDuration(nextDuration.toFixed(1));
+    setMessage(`Trim duration set to ${nextDuration.toFixed(1)} seconds.`);
   }
 
   function runVoiceCommand(raw) {
@@ -133,14 +158,15 @@ function App() {
     <section className="hero"><p className="eyebrow">YOUR IDEAS. YOUR EDIT.</p><h2>Make every second<br/><em>count.</em></h2><p className="sub">Upload, inspect, trim, use Hindi voice commands, and generate AI subtitles.</p></section>
     <section className="workspace">
       <div className="panel preview"><div className="panel-head"><span>01 / PREVIEW</span><span>LIVE CANVAS</span></div>
-        {video ? <video controls playsInline src={`${API}${video.url}`} /> : <label className="drop"><input type="file" accept="video/*" onChange={e => setFile(e.target.files?.[0] || null)} /><span className="upload-icon">＋</span><strong>{file ? file.name : 'Choose your video'}</strong><small>MP4, MOV, MKV, WEBM or AVI</small></label>}
+        {video ? <video ref={playerRef} controls playsInline src={`${API}${video.url}`} /> : <label className="drop"><input type="file" accept="video/*" onChange={e => setFile(e.target.files?.[0] || null)} /><span className="upload-icon">＋</span><strong>{file ? file.name : 'Choose your video'}</strong><small>MP4, MOV, MKV, WEBM or AVI</small></label>}
         {!video && <button className="primary" disabled={!file || busy} onClick={upload}>{busy ? 'UPLOADING…' : 'UPLOAD & ANALYSE'}</button>}
         {video && <button className="quiet" onClick={() => { setVideo(null); setInfo(null); setFile(null); setCaption(null); setMessage('Choose a video to begin editing.'); }}>Choose another video</button>}
         {info && <div className="metadata"><span>{info.width} × {info.height}</span><span>{info.duration.toFixed(1)} sec</span><span>{info.video_codec || 'Video'}</span><span>{info.has_audio ? 'Audio ✓' : 'No audio'}</span></div>}
       </div>
       <div className="panel controls"><div className="panel-head"><span>02 / EDIT TOOLS</span><span>QUICK CUT</span></div><h3>Trim your clip</h3><p className="hint">Video analysis detects duration, resolution, codecs and audio automatically.</p>
         <label>START TIME <div className="input-wrap"><input type="number" min="0" max={info?.duration || 3600} step="0.1" value={start} onChange={e => setStart(e.target.value)} /><span>seconds</span></div></label>
-        <label>DURATION <div className="input-wrap"><input type="number" min="0.1" max={maxDuration} step="0.1" value={duration} onChange={e => setDuration(e.target.value)} /><span>seconds</span></div></label>
+        <label>DURATION <div className="input-wrap"><input type="number" min="0.1" max={maxDuration} step="0.1" value={duration} onChange={e => setDuration(e.target.value)} /><span>seconds</span></div><button type="button" className="quiet" onClick={setTrimStartToPlayhead}>SET START TO PLAYHEAD</button></label>
+        <label>END POINT <div className="input-wrap"><span>Seek video, then tap below</span></div><button type="button" className="quiet" onClick={setTrimEndToPlayhead}>SET END TO PLAYHEAD</button></label>
         <button className="primary" disabled={!video || busy} onClick={exportTrim}>{busy ? 'WORKING…' : '✦  EXPORT VIDEO'}</button>
         <div className="voice-box"><h3>03 / JARVIS VOICE COMMAND</h3><p className="hint">Try “start time 5”, “duration 20”, “export video” or “अपलोड”</p><button className="quiet" disabled={busy || listening} onClick={startListening}>{listening ? 'LISTENING…' : '🎙️  SPEAK COMMAND'}</button>{commandText && <small>Heard: {commandText}</small>}</div>
         <div className="voice-box"><h3>04 / AI AUTO CAPTIONS</h3><p className="hint">Whisper creates a downloadable SRT subtitle file.</p><select value={captionLanguage} onChange={e => setCaptionLanguage(e.target.value)}><option value="auto">Detect language</option><option value="hi">Hindi</option><option value="en">English</option></select><button className="quiet" disabled={!video || busy} onClick={generateCaptions}>{busy ? 'PROCESSING…' : 'GENERATE CAPTIONS'}</button>{caption && <><a className="caption-link" href={`${API}${caption.url}`} download>Download subtitles (.srt) · {caption.segments} lines</a><pre className="caption-preview">{captionPreview.slice(0, 1800)}</pre><button className="primary" disabled={busy} onClick={burnCaptions}>BURN CAPTIONS INTO VIDEO</button></>}</div>
