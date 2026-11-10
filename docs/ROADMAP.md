@@ -1,5 +1,13 @@
 # JARVIS AI Video Studio — roadmap
 
+## Implemented in 0.15.0
+- Added background transition-export job submission with HTTP 202 responses
+- Added export job status endpoint with queued, running, completed and failed states
+- Connected the editor to poll job status and show export state/progress feedback
+- Added regression tests for successful job completion, invalid IDs and missing jobs
+- Job state is currently held in process memory; restarting the API clears active/history records and progress is phase-based, not FFmpeg frame-level
+
+
 ## Implemented in 0.14.0
 - Added persistent project save, list, load and delete API endpoints
 - Saved timeline clip order and trim points plus transition, text overlay, fade, music-volume and trim settings
