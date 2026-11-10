@@ -138,3 +138,33 @@ def test_text_overlay_rejects_font_size_out_of_range(tmp_path, monkeypatch):
     })
     assert response.status_code == 400
     assert response.json()["detail"] == "Font size must be between 16 and 96"
+
+
+def test_text_overlay_renders_and_cleans_temporary_text_file(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(main, "MEDIA", tmp_path)
+    monkeypatch.setattr(main, "run_ffprobe", lambda _source: {
+        "streams": [{"codec_type": "video"}, {"codec_type": "audio"}],
+        "format": {"duration": "5"},
+    })
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        text_path = next(tmp_path.glob("overlay-*.txt"))
+        captured["text"] = text_path.read_text(encoding="utf-8")
+        Path(command[-1]).write_bytes(b"rendered")
+        return None
+
+    monkeypatch.setattr(main.subprocess, "run", fake_run)
+    response = client.post("/api/export/text", json={
+        "filename": source.name, "text": "नमस्ते JARVIS",
+        "position": "bottom-right", "font_size": 48,
+    })
+
+    assert response.status_code == 200
+    assert response.json()["filename"].endswith(".mp4")
+    assert captured["text"] == "नमस्ते JARVIS"
+    assert "expansion=none" in captured["command"][captured["command"].index("-vf") + 1]
+    assert not list(tmp_path.glob("overlay-*.txt"))
