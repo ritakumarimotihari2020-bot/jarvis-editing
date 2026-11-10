@@ -15,7 +15,7 @@ def test_health_reports_current_api_version():
     assert response.json() == {
         "status": "ok",
         "service": "JARVIS AI Video Studio",
-        "version": "0.14.0",
+        "version": "0.15.0",
     }
 
 
@@ -358,3 +358,32 @@ def test_project_name_must_not_be_empty(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "PROJECTS", tmp_path)
     response = client.post("/api/projects", json={"name": " ", "state": {}})
     assert response.status_code == 400
+
+
+def test_transition_export_job_completes_and_returns_result(monkeypatch):
+    monkeypatch.setattr(main, "export_timeline_transition", lambda payload: {
+        "filename": "finished.mp4", "url": "/media/finished.mp4",
+        "clips": len(payload["clips"]), "transition": payload["transition"],
+        "transition_duration": payload["transition_duration"],
+    })
+    response = client.post("/api/export/jobs/timeline-transition", json={
+        "clips": [{"filename": "a.mp4"}, {"filename": "b.mp4"}],
+        "transition": "fade", "transition_duration": 0.5,
+    })
+    assert response.status_code == 202
+    job_id = response.json()["job_id"]
+    status = client.get(f"/api/export/jobs/{job_id}")
+    assert status.status_code == 200
+    assert status.json()["status"] == "completed"
+    assert status.json()["progress"] == 100
+    assert status.json()["result"]["filename"] == "finished.mp4"
+
+
+def test_export_job_rejects_invalid_job_id():
+    response = client.get("/api/export/jobs/not-a-valid-id")
+    assert response.status_code == 400
+
+
+def test_export_job_returns_404_for_unknown_id():
+    response = client.get("/api/export/jobs/" + "a" * 32)
+    assert response.status_code == 404
