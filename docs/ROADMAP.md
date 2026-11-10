@@ -1,5 +1,9 @@
 # JARVIS AI Video Studio — roadmap
 
+## Implemented in 0.9.0
+- Added draggable IN/OUT trim handles to every multi-clip timeline row
+- Kept numeric per-clip trim fields and synchronized them with the visual handles
+
 ## Implemented in 0.8.0
 - Added a dual-handle visual trim range for the main video editor
 - Drag either handle on desktop or touch screens to adjust the selected start and end points
@@ -34,11 +38,11 @@ Install the base backend requirements, then install `backend/requirements-ai.txt
 The first caption request downloads Whisper's `base` model, so the server needs internet access and enough RAM/disk. CPU transcription can be slow. Voice commands use browser Web Speech API and require a supported browser (Chrome on Android is recommended) and microphone permission.
 
 ## Next milestones
-1. Add draggable visual trim handles and waveform/audio preview.
+1. Add waveform/audio preview.
 2. Add text overlays, transitions, and audio mixing.
 3. Add project persistence and background export jobs.
 4. Add automated backend/frontend tests and deployment configuration.
 5. Package the mobile-friendly client as an Android app (Capacitor) after the web workflow is stable.
 
 ## Current limitations
-This is an early editor scaffold, not a full AI editor. The multi-clip timeline supports ordering, per-clip numeric IN/OUT trims, and joining; draggable visual handles are currently available for the main single-video trim editor, while per-clip timeline handles and waveform/audio preview are not implemented yet. Voice recognition depends on browser support. Whisper captions are optional and are not ready until the AI requirements and model are installed on the server. Subtitle burn-in requires FFmpeg with the subtitles/libass filter available. APK packaging, authentication, and cloud deployment are not implemented yet. The API needs FFmpeg and FFprobe on the server. Automated backend API tests are configured in GitHub Actions; frontend build and real video playback/export still need verification.
+This is an early editor scaffold, not a full AI editor. The multi-clip timeline supports ordering, per-clip numeric IN/OUT trims, and joining; draggable visual handles are available for both the main single-video trim editor and each multi-clip timeline row; waveform/audio preview is not implemented yet. Voice recognition depends on browser support. Whisper captions are optional and are not ready until the AI requirements and model are installed on the server. Subtitle burn-in requires FFmpeg with the subtitles/libass filter available. APK packaging, authentication, and cloud deployment are not implemented yet. The API needs FFmpeg and FFprobe on the server. Automated backend API tests are configured in GitHub Actions; frontend build and real video playback/export still need verification.
