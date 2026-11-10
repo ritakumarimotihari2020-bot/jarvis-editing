@@ -1,4 +1,5 @@
 name: JARVIS Android APK
+run-name: Build JARVIS Android APK (${{ github.ref_name }})
 
 on:
   push:
