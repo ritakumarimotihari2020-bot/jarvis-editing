@@ -19,6 +19,8 @@ function App() {
   const [captionLanguage, setCaptionLanguage] = useState('auto');
   const [captionPreview, setCaptionPreview] = useState('');
   const [timelineFiles, setTimelineFiles] = useState([]);
+  const [timelinePreviewing, setTimelinePreviewing] = useState(false);
+  const [timelinePreviewIndex, setTimelinePreviewIndex] = useState(0);
 
 
   async function addTimelineFiles(files) {
@@ -45,6 +47,45 @@ function App() {
       setMessage(added.length + ' clip(s) timeline mein add ho gaye.');
     } catch (err) { setMessage(err.message); }
     finally { setBusy(false); }
+  }
+
+  function startTimelinePreview() {
+    if (!timelineFiles.length) return;
+    setTimelinePreviewIndex(0);
+    setTimelinePreviewing(true);
+    setMessage('Timeline preview chal raha hai…');
+  }
+
+  function advanceTimelinePreview() {
+    setTimelinePreviewIndex(current => {
+      if (current + 1 >= timelineFiles.length) {
+        setTimelinePreviewing(false);
+        setMessage('Timeline preview complete.');
+        return current;
+      }
+      return current + 1;
+    });
+  }
+
+  function handleTimelinePreviewLoaded() {
+    if (!timelinePreviewing) return;
+    const clip = timelineFiles[timelinePreviewIndex];
+    if (!clip || !playerRef.current) return;
+    playerRef.current.currentTime = Number(clip.trimStart) || 0;
+    playerRef.current.play().catch(() => setMessage('Preview ready. Player par Play dabayein.'));
+  }
+
+  function handleTimelinePreviewTime() {
+    if (!timelinePreviewing) return;
+    const clip = timelineFiles[timelinePreviewIndex];
+    if (clip && playerRef.current && playerRef.current.currentTime >= Number(clip.trimEnd) - 0.04) {
+      if (timelinePreviewIndex + 1 < timelineFiles.length) advanceTimelinePreview();
+      else {
+        playerRef.current.pause();
+        setTimelinePreviewing(false);
+        setMessage('Timeline preview complete.');
+      }
+    }
   }
 
   function moveTimelineClip(index, direction) {
@@ -217,7 +258,7 @@ function App() {
     <section className="hero"><p className="eyebrow">YOUR IDEAS. YOUR EDIT.</p><h2>Make every second<br/><em>count.</em></h2><p className="sub">Upload, inspect, trim, use Hindi voice commands, and generate AI subtitles.</p></section>
     <section className="workspace">
       <div className="panel preview"><div className="panel-head"><span>01 / PREVIEW</span><span>LIVE CANVAS</span></div>
-        {video ? <video ref={playerRef} controls playsInline src={`${API}${video.url}`} /> : <label className="drop"><input type="file" accept="video/*" onChange={e => setFile(e.target.files?.[0] || null)} /><span className="upload-icon">＋</span><strong>{file ? file.name : 'Choose your video'}</strong><small>MP4, MOV, MKV, WEBM or AVI</small></label>}
+        {video ? <video ref={playerRef} controls playsInline onLoadedMetadata={handleTimelinePreviewLoaded} onTimeUpdate={handleTimelinePreviewTime} onEnded={() => { if (timelinePreviewing) advanceTimelinePreview(); }} src={timelinePreviewing && timelineFiles[timelinePreviewIndex] ? API + timelineFiles[timelinePreviewIndex].url : `${API}${video.url}`} /> : <label className="drop"><input type="file" accept="video/*" onChange={e => setFile(e.target.files?.[0] || null)} /><span className="upload-icon">＋</span><strong>{file ? file.name : 'Choose your video'}</strong><small>MP4, MOV, MKV, WEBM or AVI</small></label>}
         {!video && <button className="primary" disabled={!file || busy} onClick={upload}>{busy ? 'UPLOADING…' : 'UPLOAD & ANALYSE'}</button>}
         {video && <button className="quiet" onClick={() => { setVideo(null); setInfo(null); setFile(null); setCaption(null); setMessage('Choose a video to begin editing.'); }}>Choose another video</button>}
         {info && <div className="metadata"><span>{info.width} × {info.height}</span><span>{info.duration.toFixed(1)} sec</span><span>{info.video_codec || 'Video'}</span><span>{info.has_audio ? 'Audio ✓' : 'No audio'}</span></div>}
@@ -233,6 +274,7 @@ function App() {
         <div className="voice-box timeline-box"><h3>05 / MULTI-CLIP TIMELINE</h3><p className="hint">Multiple videos add karein, order badlein aur ek MP4 export karein. Maximum 20 clips.</p>
           <label className="timeline-add">＋ ADD VIDEO CLIPS<input type="file" accept="video/*" multiple disabled={busy} onChange={e => { addTimelineFiles(e.target.files); e.target.value = ''; }} /></label>
           {timelineFiles.length > 0 && <ol className="timeline-list">{timelineFiles.map((clip, index) => <li key={clip.filename}><div className="timeline-clip-main"><strong>{index + 1}. {clip.original_name || clip.filename}</strong><small>Full length: {Number(clip.duration).toFixed(1)} sec</small><div className="timeline-trim"><label>IN <input aria-label={'Clip ' + (index + 1) + ' start'} type="number" min="0" max={clip.duration} step="0.1" value={clip.trimStart} disabled={busy} onChange={e => setTimelineFiles(current => current.map((item, i) => i === index ? { ...item, trimStart: e.target.value } : item))} /></label><label>OUT <input aria-label={'Clip ' + (index + 1) + ' end'} type="number" min="0.1" max={clip.duration} step="0.1" value={clip.trimEnd} disabled={busy} onChange={e => setTimelineFiles(current => current.map((item, i) => i === index ? { ...item, trimEnd: e.target.value } : item))} /></label></div><small>Selected: {Math.max(0, Number(clip.trimEnd) - Number(clip.trimStart)).toFixed(1)} sec</small></div><span className="timeline-actions"><button type="button" className="quiet" disabled={busy || index === 0} onClick={() => moveTimelineClip(index, -1)}>↑</button><button type="button" className="quiet" disabled={busy || index === timelineFiles.length - 1} onClick={() => moveTimelineClip(index, 1)}>↓</button><button type="button" className="quiet" disabled={busy} onClick={() => setTimelineFiles(current => current.filter((_, i) => i !== index))}>×</button></span></li>)}</ol>}
+          <button className="quiet" disabled={busy || timelineFiles.length === 0} onClick={startTimelinePreview}>▶ PREVIEW TIMELINE</button>
           <button className="primary" disabled={busy || timelineFiles.length < 2} onClick={exportTimeline}>EXPORT {timelineFiles.length} CLIPS AS ONE VIDEO</button>
         </div>
         <p className="notice" role="status">{message}</p>
