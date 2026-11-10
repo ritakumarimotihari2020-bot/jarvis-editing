@@ -8,6 +8,11 @@ on:
       - "frontend/**"
       - ".github/workflows/android-apk.yml"
   workflow_dispatch:
+    inputs:
+      api_url:
+        description: "Public HTTPS URL of the running FastAPI backend (optional if repository variable VITE_API_URL is set)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -23,7 +28,7 @@ jobs:
 
       - name: Validate backend URL
         env:
-          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_API_URL: ${{ inputs.api_url || vars.VITE_API_URL }}
         run: |
           if [ -z "$VITE_API_URL" ]; then
             echo "::error::Set the repository variable VITE_API_URL to your public HTTPS FastAPI backend URL."
@@ -52,7 +57,7 @@ jobs:
       - name: Build web app for Android
         working-directory: frontend
         env:
-          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_API_URL: ${{ inputs.api_url || vars.VITE_API_URL }}
         run: npm run build:mobile
 
       - name: Generate Android project
