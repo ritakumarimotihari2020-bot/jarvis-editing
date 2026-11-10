@@ -464,3 +464,16 @@ def test_export_history_endpoint_returns_saved_jobs(tmp_path, monkeypatch):
     assert response.json()["total"] >= 1
     assert any(job["id"] == job_id for job in response.json()["jobs"])
     main._export_jobs.pop(job_id, None)
+
+
+
+def test_ffmpeg_progress_percent_supports_both_time_formats():
+    assert main._ffmpeg_progress_percent("out_time_ms=5000000", 10) == 50
+    assert main._ffmpeg_progress_percent("out_time=00:00:07.500", 10) == 75
+
+
+def test_ffmpeg_progress_percent_is_bounded_and_ignores_invalid_values():
+    assert main._ffmpeg_progress_percent("out_time_ms=99999999", 10) == 99
+    assert main._ffmpeg_progress_percent("out_time=N/A", 10) is None
+    assert main._ffmpeg_progress_percent("progress=end", 10) is None
+    assert main._ffmpeg_progress_percent("out_time_ms=1000000", 0) is None
