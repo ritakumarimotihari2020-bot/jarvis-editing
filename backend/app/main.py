@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MEDIA = ROOT / "media"
 MEDIA.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="JARVIS AI Video Studio API", version="0.11.0")
+app = FastAPI(title="JARVIS AI Video Studio API", version="0.12.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -59,7 +59,7 @@ def srt_time(seconds: float) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.11.0"}
+    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.12.0"}
 
 
 @app.post("/api/upload")
@@ -340,6 +340,68 @@ def export_text_overlay(payload: dict):
         raise HTTPException(status_code=504, detail="Text overlay export timed out")
     finally:
         text_file.unlink(missing_ok=True)
+    return {"filename": output_name, "url": f"/media/{output_name}"}
+
+
+
+
+@app.post("/api/export/fade")
+def export_fade(payload: dict):
+    """Apply fade-in and/or fade-out effects to a video and its audio."""
+    source = get_media_file(payload.get("filename", ""))
+    try:
+        fade_in = float(payload.get("fade_in", 0))
+        fade_out = float(payload.get("fade_out", 0))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Fade durations must be numbers")
+    if not all(map(lambda value: value >= 0, (fade_in, fade_out))):
+        raise HTTPException(status_code=400, detail="Fade durations cannot be negative")
+    info = run_ffprobe(source)
+    streams = info.get("streams", [])
+    video_stream = next((item for item in streams if item.get("codec_type") == "video"), None)
+    if not video_stream:
+        raise HTTPException(status_code=422, detail="Source file has no video stream")
+    duration = float(info.get("format", {}).get("duration") or video_stream.get("duration") or 0)
+    if duration <= 0:
+        raise HTTPException(status_code=422, detail="Video duration is unavailable")
+    if fade_in > duration or fade_out > duration or fade_in + fade_out > duration:
+        raise HTTPException(status_code=400, detail="Combined fade durations cannot exceed video duration")
+    if fade_in == 0 and fade_out == 0:
+        raise HTTPException(status_code=400, detail="Set fade-in or fade-out duration")
+    has_audio = any(item.get("codec_type") == "audio" for item in streams)
+    filters = []
+    video_filters = []
+    if fade_in:
+        video_filters.append(f"fade=t=in:st=0:d={fade_in}")
+    if fade_out:
+        video_filters.append(f"fade=t=out:st={max(0, duration - fade_out)}:d={fade_out}")
+    if video_filters:
+        filters.append(f"[0:v:0]{','.join(video_filters)}[v]")
+    if has_audio:
+        audio_filters = []
+        if fade_in:
+            audio_filters.append(f"afade=t=in:st=0:d={fade_in}")
+        if fade_out:
+            audio_filters.append(f"afade=t=out:st={max(0, duration - fade_out)}:d={fade_out}")
+        filters.append(f"[0:a:0]{','.join(audio_filters)}[a]")
+    output_name = f"{source.stem}-fade-{uuid.uuid4().hex[:8]}.mp4"
+    output = MEDIA / output_name
+    command = ["ffmpeg", "-y", "-i", str(source), "-filter_complex", ";".join(filters)]
+    command += ["-map", "[v]"]
+    if has_audio:
+        command += ["-map", "[a]"]
+    command += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+    if has_audio:
+        command += ["-c:a", "aac", "-b:a", "192k"]
+    command += ["-movflags", "+faststart", str(output)]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=422, detail=exc.stderr[-1500:] or "Fade export failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Fade export timed out")
     return {"filename": output_name, "url": f"/media/{output_name}"}
 
 
