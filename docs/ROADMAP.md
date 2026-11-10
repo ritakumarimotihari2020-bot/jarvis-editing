@@ -1,5 +1,13 @@
 # JARVIS AI Video Studio — roadmap
 
+## Implemented in 0.17.0
+- Persisted the latest 100 export job records to `projects/export_jobs.json` using atomic file replacement
+- Added timestamps and a history endpoint (`GET /api/export/jobs`)
+- Added editor history refresh and links to completed export files
+- On API startup, queued/running records are marked `interrupted` instead of falsely appearing active
+- Added regression coverage for history persistence, restart recovery and history listing
+- Persistence survives API process restarts when the project directory is retained; container replacement still requires a persistent volume
+
 ## Implemented in 0.16.0
 - Added a cancel endpoint for queued/running transition export jobs
 - FFmpeg normalization and final render subprocesses can now be terminated when cancellation is requested
