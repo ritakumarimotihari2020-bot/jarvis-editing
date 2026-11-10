@@ -16,7 +16,7 @@ MEDIA.mkdir(parents=True, exist_ok=True)
 PROJECTS = ROOT / "projects"
 PROJECTS.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="JARVIS AI Video Studio API", version="0.15.0")
+app = FastAPI(title="JARVIS AI Video Studio API", version="0.16.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,6 +30,7 @@ ALLOWED = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
 ALLOWED_AUDIO = {".mp3", ".wav", ".aac", ".m4a", ".ogg", ".flac"}
 _whisper_model = None
 _export_jobs = {}
+_export_processes = {}
 
 
 def get_media_file(filename: str) -> Path:
@@ -64,7 +65,7 @@ def srt_time(seconds: float) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.15.0"}
+    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.16.0"}
 
 
 @app.post("/api/upload")
@@ -470,7 +471,7 @@ def export_timeline(payload: dict):
                 "-c:a", "aac", "-ar", "44100", "-ac", "2", "-shortest",
                 "-movflags", "+faststart", str(normalized_file),
             ]
-            subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
+            _run_export_process(command, job_id=job_id, timeout=1800)
             normalized.append(normalized_file)
         concat_list.write_text(
             "".join(f"file '{path.name}'
@@ -494,8 +495,43 @@ def export_timeline(payload: dict):
     return {"filename": output_name, "url": f"/media/{output_name}", "clips": len(prepared)}
 
 
+def _run_export_process(command, job_id=None, timeout=1800):
+    """Run an FFmpeg step that can be stopped by its owning export job."""
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    if job_id:
+        _export_processes[job_id] = process
+    try:
+        import time
+        deadline = time.monotonic() + timeout
+        while True:
+            if job_id and _export_jobs.get(job_id, {}).get("cancel_requested"):
+                process.terminate()
+                try:
+                    stdout, stderr = process.communicate(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                raise InterruptedError("Export cancelled by user")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                process.kill()
+                stdout, stderr = process.communicate()
+                raise subprocess.TimeoutExpired(command, timeout, output=stdout, stderr=stderr)
+            try:
+                stdout, stderr = process.communicate(timeout=min(0.25, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, command, output=stdout, stderr=stderr)
+        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+    finally:
+        if job_id:
+            _export_processes.pop(job_id, None)
+
+
 @app.post("/api/export/timeline-transition")
-def export_timeline_transition(payload: dict):
+def export_timeline_transition(payload: dict, job_id: str | None = None):
     """Join timeline clips with a video transition and matching audio crossfades."""
     clips = payload.get("clips")
     if not isinstance(clips, list) or not 2 <= len(clips) <= 20:
@@ -582,7 +618,7 @@ def export_timeline_transition(payload: dict):
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
         ]
-        subprocess.run(command, check=True, capture_output=True, text=True, timeout=3600)
+        _run_export_process(command, job_id=job_id, timeout=3600)
     except FileNotFoundError:
         raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
     except subprocess.CalledProcessError as exc:
@@ -726,11 +762,19 @@ def delete_project(project_id: str):
 def _run_export_job(job_id: str, payload: dict):
     _export_jobs[job_id].update({"status": "running", "progress": 5, "message": "Preparing video clips"})
     try:
-        result = export_timeline_transition(payload)
-        _export_jobs[job_id].update({
-            "status": "completed", "progress": 100,
-            "message": "Export complete", "result": result,
-        })
+        if _export_jobs[job_id].get("cancel_requested"):
+            _export_jobs[job_id].update({"status": "cancelled", "progress": 0, "message": "Export cancelled"})
+            return
+        result = export_timeline_transition(payload, job_id=job_id)
+        if _export_jobs[job_id].get("cancel_requested"):
+            _export_jobs[job_id].update({"status": "cancelled", "progress": 0, "message": "Export cancelled"})
+        else:
+            _export_jobs[job_id].update({
+                "status": "completed", "progress": 100,
+                "message": "Export complete", "result": result,
+            })
+    except InterruptedError:
+        _export_jobs[job_id].update({"status": "cancelled", "progress": 0, "message": "Export cancelled"})
     except HTTPException as exc:
         _export_jobs[job_id].update({
             "status": "failed", "progress": 0, "message": str(exc.detail),
@@ -750,6 +794,20 @@ def start_transition_export_job(payload: dict, background_tasks: BackgroundTasks
     }
     background_tasks.add_task(_run_export_job, job_id, payload)
     return {"job_id": job_id, "status": "queued", "status_url": f"/api/export/jobs/{job_id}"}
+
+
+@app.post("/api/export/jobs/{job_id}/cancel")
+def cancel_export_job(job_id: str):
+    if not re.fullmatch(r"[a-f0-9]{32}", job_id):
+        raise HTTPException(status_code=400, detail="Invalid export job ID")
+    job = _export_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Export job not found")
+    if job["status"] in {"completed", "failed", "cancelled"}:
+        raise HTTPException(status_code=409, detail="Cannot cancel a finished export")
+    job["cancel_requested"] = True
+    job["message"] = "Cancellation requested"
+    return {"id": job_id, "status": job["status"], "cancel_requested": True}
 
 
 @app.get("/api/export/jobs/{job_id}")
