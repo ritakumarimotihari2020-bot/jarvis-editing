@@ -15,7 +15,7 @@ def test_health_reports_current_api_version():
     assert response.json() == {
         "status": "ok",
         "service": "JARVIS AI Video Studio",
-        "version": "0.9.1",
+        "version": "0.10.0",
     }
 
 
@@ -73,3 +73,34 @@ def test_waveform_reports_video_without_audio(tmp_path, monkeypatch):
     assert response.status_code == 200
     assert response.json()["has_audio"] is False
     assert response.json()["samples"] == []
+
+
+
+def test_audio_mix_rejects_volume_out_of_range(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    music = tmp_path / "music.mp3"
+    source.write_bytes(b"video")
+    music.write_bytes(b"audio")
+    monkeypatch.setattr(main, "MEDIA", tmp_path)
+    monkeypatch.setattr(main, "run_ffprobe", lambda _source: {
+        "streams": [{"codec_type": "video"}, {"codec_type": "audio"}],
+        "format": {"duration": "10"},
+    })
+
+    response = client.post("/api/export/audio-mix", json={
+        "filename": source.name, "audio_filename": music.name,
+        "music_volume": 3, "original_volume": 1,
+    })
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Audio volume must be between 0 and 2"
+
+
+def test_audio_upload_rejects_video_file():
+    response = client.post(
+        "/api/upload/audio",
+        files={"file": ("clip.mp4", b"not audio", "video/mp4")},
+    )
+
+    assert response.status_code == 415
+    assert response.json()["detail"] == "Unsupported audio format"
