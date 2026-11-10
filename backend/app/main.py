@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MEDIA = ROOT / "media"
 MEDIA.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="JARVIS AI Video Studio API", version="0.3.0")
+app = FastAPI(title="JARVIS AI Video Studio API", version="0.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -58,7 +58,7 @@ def srt_time(seconds: float) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.3.0"}
+    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.4.0"}
 
 
 @app.post("/api/upload")
@@ -146,6 +146,36 @@ def generate_captions(filename: str, language: str = "auto"):
     finally:
         audio_path.unlink(missing_ok=True)
 
+
+
+@app.post("/api/export/captions")
+def burn_captions(payload: dict):
+    """Burn a generated SRT file into a video and return a new MP4."""
+    source = get_media_file(payload.get("filename", ""))
+    subtitle_name = Path(str(payload.get("subtitle_filename", ""))).name
+    if not subtitle_name.endswith(".srt"):
+        raise HTTPException(status_code=400, detail="A generated .srt subtitle file is required")
+    subtitle = MEDIA / subtitle_name
+    if not subtitle.is_file():
+        raise HTTPException(status_code=404, detail="Subtitle file not found; generate captions again")
+    # Escape characters significant to FFmpeg's filter parser.
+    subtitle_path = str(subtitle.resolve()).replace("\\\\", "\\\\\\\\").replace(":", "\\\\:").replace("'", "\\\\'")
+    output_name = f"{source.stem}-subtitled-{uuid.uuid4().hex[:8]}.mp4"
+    output = MEDIA / output_name
+    command = [
+        "ffmpeg", "-y", "-i", str(source), "-vf", f"subtitles='{subtitle_path}'",
+        "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac",
+        "-movflags", "+faststart", str(output),
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=422, detail=exc.stderr[-1500:] or "Subtitle burn-in failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Subtitle export timed out")
+    return {"filename": output_name, "url": f"/media/{output_name}"}
 
 @app.post("/api/export/trim")
 def trim_video(payload: dict):
