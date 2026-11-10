@@ -15,7 +15,7 @@ def test_health_reports_current_api_version():
     assert response.json() == {
         "status": "ok",
         "service": "JARVIS AI Video Studio",
-        "version": "0.12.0",
+        "version": "0.13.0",
     }
 
 
@@ -255,3 +255,67 @@ def test_fade_applies_matching_audio_filters_when_audio_exists(tmp_path, monkeyp
     assert "afade=t=in:st=0:d=1.0" in graph
     assert "afade=t=out:st=7.0:d=1.0" in graph
     assert "[a]" in graph
+
+
+
+def test_transition_export_rejects_unsupported_transition():
+    response = client.post("/api/export/timeline-transition", json={
+        "clips": [{"filename": "a.mp4", "start": 0, "end": 2},
+                  {"filename": "b.mp4", "start": 0, "end": 2}],
+        "transition": "explode",
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Unsupported transition type"
+
+
+def test_transition_export_rejects_duration_out_of_range():
+    response = client.post("/api/export/timeline-transition", json={
+        "clips": [{"filename": "a.mp4", "start": 0, "end": 2},
+                  {"filename": "b.mp4", "start": 0, "end": 2}],
+        "transition": "fade", "transition_duration": 5,
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Transition duration must be between 0.1 and 3 seconds"
+
+
+def test_transition_export_rejects_too_short_clip(tmp_path, monkeypatch):
+    source = tmp_path / "short.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(main, "MEDIA", tmp_path)
+    monkeypatch.setattr(main, "run_ffprobe", lambda _source: {
+        "streams": [{"codec_type": "video"}], "format": {"duration": "1"}
+    })
+    response = client.post("/api/export/timeline-transition", json={
+        "clips": [{"filename": source.name, "start": 0, "end": 1},
+                  {"filename": source.name, "start": 0, "end": 1}],
+        "transition": "fade", "transition_duration": 1,
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Each selected clip must be longer than the transition"
+
+
+def test_transition_export_builds_video_and_audio_crossfade_graph(tmp_path, monkeypatch):
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(main, "MEDIA", tmp_path)
+    monkeypatch.setattr(main, "run_ffprobe", lambda _source: {
+        "streams": [{"codec_type": "video"}, {"codec_type": "audio"}],
+        "format": {"duration": "5"},
+    })
+    captured = {}
+    def fake_run(command, **kwargs):
+        captured.setdefault("commands", []).append(command)
+        Path(command[-1]).write_bytes(b"rendered")
+    monkeypatch.setattr(main.subprocess, "run", fake_run)
+    response = client.post("/api/export/timeline-transition", json={
+        "clips": [{"filename": source.name, "start": 0, "end": 4},
+                  {"filename": source.name, "start": 0, "end": 4},
+                  {"filename": source.name, "start": 0, "end": 4}],
+        "transition": "dissolve", "transition_duration": 1,
+    })
+    assert response.status_code == 200
+    graph = captured["commands"][-1][captured["commands"][-1].index("-filter_complex") + 1]
+    assert graph.count("xfade=transition=dissolve") == 2
+    assert graph.count("acrossfade=d=1.0") == 2
+    assert response.json()["clips"] == 3
+    assert not list(tmp_path.glob("transition-*.mp4"))
