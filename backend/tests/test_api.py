@@ -15,7 +15,7 @@ def test_health_reports_current_api_version():
     assert response.json() == {
         "status": "ok",
         "service": "JARVIS AI Video Studio",
-        "version": "0.7.0",
+        "version": "0.8.0",
     }
 
 
