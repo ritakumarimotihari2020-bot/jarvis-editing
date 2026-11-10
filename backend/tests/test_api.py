@@ -2,7 +2,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from app import main
+from backend.app import main
 
 
 client = TestClient(main.app)
