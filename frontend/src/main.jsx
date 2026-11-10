@@ -44,6 +44,7 @@ function App() {
         added.push({ ...body, duration: meta.duration, trimStart: 0, trimEnd: meta.duration });
       }
       setTimelineFiles(current => [...current, ...added]);
+      setVideo(current => current || added[0]);
       setMessage(added.length + ' clip(s) timeline mein add ho gaye.');
     } catch (err) { setMessage(err.message); }
     finally { setBusy(false); }
