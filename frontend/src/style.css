@@ -8,3 +8,11 @@
 .timeline-list li>span:first-child{overflow-wrap:anywhere}
 .timeline-actions{display:flex;gap:4px;flex-shrink:0}
 .timeline-actions .quiet{margin:0;padding:5px 9px}
+
+.timeline-list li{align-items:flex-start}
+.timeline-clip-main{min-width:0;flex:1}
+.timeline-clip-main strong,.timeline-clip-main small{display:block;overflow-wrap:anywhere}
+.timeline-clip-main small{color:#8493ad;font-size:10px;margin-top:4px}
+.timeline-trim{display:flex;gap:8px;margin-top:8px}
+.timeline-trim label{display:flex;align-items:center;gap:5px;margin:0;color:#8493ad;font:10px 'DM Mono',monospace}
+.timeline-trim input{width:76px;min-width:0;background:#0b1321;border:1px solid #35455e;border-radius:6px;padding:7px;color:#edf2ff;font:12px Manrope}
