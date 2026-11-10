@@ -5,6 +5,7 @@ import re
 import shutil
 import subprocess
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,6 +32,55 @@ ALLOWED_AUDIO = {".mp3", ".wav", ".aac", ".m4a", ".ogg", ".flac"}
 _whisper_model = None
 _export_jobs = {}
 _export_processes = {}
+
+
+def _utc_now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _export_history_path():
+    return PROJECTS / "export_jobs.json"
+
+
+def _persist_export_jobs():
+    PROJECTS.mkdir(parents=True, exist_ok=True)
+    path = _export_history_path()
+    temporary = path.with_suffix(".json.tmp")
+    records = sorted(_export_jobs.values(), key=lambda item: item.get("created_at", ""), reverse=True)[:100]
+    temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _load_export_jobs():
+    path = _export_history_path()
+    if not path.is_file():
+        return
+    try:
+        records = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(records, list):
+            return
+        for job in records[:100]:
+            if not isinstance(job, dict) or not re.fullmatch(r"[a-f0-9]{32}", str(job.get("id", ""))):
+                continue
+            if job.get("status") in {"queued", "running"}:
+                job.update({"status": "interrupted", "progress": 0, "message": "API restarted before this export finished", "cancel_requested": False})
+                job["finished_at"] = _utc_now()
+            _export_jobs[job["id"]] = job
+        _persist_export_jobs()
+    except (OSError, ValueError, TypeError):
+        return
+
+
+def _update_export_job(job_id, changes):
+    job = _export_jobs[job_id]
+    job.update(changes)
+    if job.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
+        job.setdefault("finished_at", _utc_now())
+    _persist_export_jobs()
+    return job
+
+
+_load_export_jobs()
 
 
 def get_media_file(filename: str) -> Path:
@@ -756,29 +806,25 @@ def delete_project(project_id: str):
 
 
 def _run_export_job(job_id: str, payload: dict):
-    _export_jobs[job_id].update({"status": "running", "progress": 5, "message": "Preparing video clips"})
+    _update_export_job(job_id, {"status": "running", "progress": 5, "message": "Preparing video clips"})
     try:
         if _export_jobs[job_id].get("cancel_requested"):
-            _export_jobs[job_id].update({"status": "cancelled", "progress": 0, "message": "Export cancelled"})
+            _update_export_job(job_id, {"status": "cancelled", "progress": 0, "message": "Export cancelled"})
             return
         result = export_timeline_transition(payload, job_id=job_id)
         if _export_jobs[job_id].get("cancel_requested"):
-            _export_jobs[job_id].update({"status": "cancelled", "progress": 0, "message": "Export cancelled"})
+            _update_export_job(job_id, {"status": "cancelled", "progress": 0, "message": "Export cancelled"})
         else:
-            _export_jobs[job_id].update({
+            _update_export_job(job_id, {
                 "status": "completed", "progress": 100,
                 "message": "Export complete", "result": result,
             })
     except InterruptedError:
-        _export_jobs[job_id].update({"status": "cancelled", "progress": 0, "message": "Export cancelled"})
+        _update_export_job(job_id, {"status": "cancelled", "progress": 0, "message": "Export cancelled"})
     except HTTPException as exc:
-        _export_jobs[job_id].update({
-            "status": "failed", "progress": 0, "message": str(exc.detail),
-        })
+        _update_export_job(job_id, {"status": "failed", "progress": 0, "message": str(exc.detail)})
     except Exception:
-        _export_jobs[job_id].update({
-            "status": "failed", "progress": 0, "message": "Unexpected export error",
-        })
+        _update_export_job(job_id, {"status": "failed", "progress": 0, "message": "Unexpected export error"})
 
 
 @app.post("/api/export/jobs/timeline-transition", status_code=202)
@@ -787,7 +833,10 @@ def start_transition_export_job(payload: dict, background_tasks: BackgroundTasks
     _export_jobs[job_id] = {
         "id": job_id, "status": "queued", "progress": 0,
         "message": "Export queued", "result": None,
+        "created_at": _utc_now(), "finished_at": None,
+        "cancel_requested": False,
     }
+    _persist_export_jobs()
     background_tasks.add_task(_run_export_job, job_id, payload)
     return {"job_id": job_id, "status": "queued", "status_url": f"/api/export/jobs/{job_id}"}
 
@@ -801,9 +850,15 @@ def cancel_export_job(job_id: str):
         raise HTTPException(status_code=404, detail="Export job not found")
     if job["status"] in {"completed", "failed", "cancelled"}:
         raise HTTPException(status_code=409, detail="Cannot cancel a finished export")
-    job["cancel_requested"] = True
-    job["message"] = "Cancellation requested"
+    _update_export_job(job_id, {"cancel_requested": True, "message": "Cancellation requested"})
     return {"id": job_id, "status": job["status"], "cancel_requested": True}
+
+
+@app.get("/api/export/jobs")
+def list_export_jobs(limit: int = 50):
+    limit = min(100, max(1, limit))
+    jobs = sorted(_export_jobs.values(), key=lambda item: item.get("created_at", ""), reverse=True)
+    return {"jobs": jobs[:limit], "total": len(jobs)}
 
 
 @app.get("/api/export/jobs/{job_id}")
