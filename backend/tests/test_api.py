@@ -15,7 +15,7 @@ def test_health_reports_current_api_version():
     assert response.json() == {
         "status": "ok",
         "service": "JARVIS AI Video Studio",
-        "version": "0.13.0",
+        "version": "0.14.0",
     }
 
 
@@ -319,3 +319,42 @@ def test_transition_export_builds_video_and_audio_crossfade_graph(tmp_path, monk
     assert graph.count("acrossfade=d=1.0") == 2
     assert response.json()["clips"] == 3
     assert not list(tmp_path.glob("transition-*.mp4"))
+
+
+def test_projects_can_be_saved_loaded_and_deleted(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "PROJECTS", tmp_path)
+    saved = client.post("/api/projects", json={
+        "name": "Travel edit",
+        "state": {"timeline_files": [], "timeline_transition": "dissolve"}
+    })
+    assert saved.status_code == 200
+    project_id = saved.json()["id"]
+
+    listing = client.get("/api/projects")
+    assert listing.status_code == 200
+    assert listing.json()["projects"][0]["name"] == "Travel edit"
+
+    loaded = client.get(f"/api/projects/{project_id}")
+    assert loaded.status_code == 200
+    assert loaded.json()["state"]["timeline_transition"] == "dissolve"
+
+    deleted = client.delete(f"/api/projects/{project_id}")
+    assert deleted.status_code == 200
+    assert client.get(f"/api/projects/{project_id}").status_code == 404
+
+
+def test_project_save_rejects_missing_clip_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "PROJECTS", tmp_path)
+    response = client.post("/api/projects", json={
+        "name": "Broken project",
+        "state": {"timeline_files": [{
+            "filename": "missing.mp4", "duration": 5, "trimStart": 0, "trimEnd": 5
+        }]}
+    })
+    assert response.status_code == 404
+
+
+def test_project_name_must_not_be_empty(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "PROJECTS", tmp_path)
+    response = client.post("/api/projects", json={"name": " ", "state": {}})
+    assert response.status_code == 400
