@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import uuid
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -16,7 +16,7 @@ MEDIA.mkdir(parents=True, exist_ok=True)
 PROJECTS = ROOT / "projects"
 PROJECTS.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="JARVIS AI Video Studio API", version="0.14.0")
+app = FastAPI(title="JARVIS AI Video Studio API", version="0.15.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -28,7 +28,7 @@ app.mount("/media", StaticFiles(directory=MEDIA), name="media")
 
 ALLOWED = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
 ALLOWED_AUDIO = {".mp3", ".wav", ".aac", ".m4a", ".ogg", ".flac"}
-_whisper_model = None
+_whisper_model = None\n_export_jobs = {}
 
 
 def get_media_file(filename: str) -> Path:
@@ -63,7 +63,7 @@ def srt_time(seconds: float) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.14.0"}
+    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.15.0"}
 
 
 @app.post("/api/upload")
@@ -714,3 +714,42 @@ def delete_project(project_id: str):
         raise HTTPException(status_code=404, detail="Project not found")
     target.unlink()
     return {"deleted": True, "id": project_id}
+
+
+def _run_export_job(job_id: str, payload: dict):
+    _export_jobs[job_id].update({"status": "running", "progress": 5, "message": "Preparing video clips"})
+    try:
+        result = export_timeline_transition(payload)
+        _export_jobs[job_id].update({
+            "status": "completed", "progress": 100,
+            "message": "Export complete", "result": result,
+        })
+    except HTTPException as exc:
+        _export_jobs[job_id].update({
+            "status": "failed", "progress": 0, "message": str(exc.detail),
+        })
+    except Exception:
+        _export_jobs[job_id].update({
+            "status": "failed", "progress": 0, "message": "Unexpected export error",
+        })
+
+
+@app.post("/api/export/jobs/timeline-transition", status_code=202)
+def start_transition_export_job(payload: dict, background_tasks: BackgroundTasks):
+    job_id = uuid.uuid4().hex
+    _export_jobs[job_id] = {
+        "id": job_id, "status": "queued", "progress": 0,
+        "message": "Export queued", "result": None,
+    }
+    background_tasks.add_task(_run_export_job, job_id, payload)
+    return {"job_id": job_id, "status": "queued", "status_url": f"/api/export/jobs/{job_id}"}
+
+
+@app.get("/api/export/jobs/{job_id}")
+def get_export_job(job_id: str):
+    if not re.fullmatch(r"[a-f0-9]{32}", job_id):
+        raise HTTPException(status_code=400, detail="Invalid export job ID")
+    job = _export_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Export job not found")
+    return job
