@@ -552,7 +552,7 @@ def _ffmpeg_progress_percent(progress_line, expected_duration):
         except ValueError:
             return None
     elif key == "out_time":
-        match = re.fullmatch(r"(\\d+):(\\d+):(\\d+(?:\\.\\d+)?)", value)
+        match = re.fullmatch(r"(\d+):(\d+):(\d+(?:\.\d+)?)", value)
         if not match:
             return None
         hours, minutes, seconds = match.groups()
