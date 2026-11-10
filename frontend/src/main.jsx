@@ -36,7 +36,10 @@ function App() {
         const res = await fetch(API + '/api/upload', { method: 'POST', body: data });
         const body = await res.json();
         if (!res.ok) throw new Error(body.detail || ('Upload failed: ' + item.name));
-        added.push(body);
+        const metaRes = await fetch(API + '/api/video/' + encodeURIComponent(body.filename) + '/info');
+        const meta = await metaRes.json();
+        if (!metaRes.ok) throw new Error(meta.detail || 'Could not analyse ' + item.name);
+        added.push({ ...body, duration: meta.duration, trimStart: 0, trimEnd: meta.duration });
       }
       setTimelineFiles(current => [...current, ...added]);
       setMessage(added.length + ' clip(s) timeline mein add ho gaye.');
@@ -58,11 +61,13 @@ function App() {
       setMessage('Timeline export ke liye kam se kam 2 clips add karein.');
       return;
     }
+    const invalid = timelineFiles.find(item => !Number.isFinite(Number(item.trimStart)) || !Number.isFinite(Number(item.trimEnd)) || Number(item.trimStart) < 0 || Number(item.trimEnd) <= Number(item.trimStart) || Number(item.trimEnd) > Number(item.duration) + 0.05);
+    if (invalid) { setMessage('Har clip ka Start aur End uski duration ke andar rakhein.'); return; }
     setBusy(true); setMessage('Timeline render ho rahi hai. Multiple clips mein time lag sakta hai…');
     try {
       const res = await fetch(API + '/api/export/timeline', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filenames: timelineFiles.map(item => item.filename) })
+        body: JSON.stringify({ clips: timelineFiles.map(item => ({ filename: item.filename, start: Number(item.trimStart), end: Number(item.trimEnd) })) })
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.detail || 'Timeline export failed');
@@ -227,13 +232,13 @@ function App() {
 
         <div className="voice-box timeline-box"><h3>05 / MULTI-CLIP TIMELINE</h3><p className="hint">Multiple videos add karein, order badlein aur ek MP4 export karein. Maximum 20 clips.</p>
           <label className="timeline-add">＋ ADD VIDEO CLIPS<input type="file" accept="video/*" multiple disabled={busy} onChange={e => { addTimelineFiles(e.target.files); e.target.value = ''; }} /></label>
-          {timelineFiles.length > 0 && <ol className="timeline-list">{timelineFiles.map((clip, index) => <li key={clip.filename}><span>{index + 1}. {clip.original_name || clip.filename}</span><span className="timeline-actions"><button type="button" className="quiet" disabled={busy || index === 0} onClick={() => moveTimelineClip(index, -1)}>↑</button><button type="button" className="quiet" disabled={busy || index === timelineFiles.length - 1} onClick={() => moveTimelineClip(index, 1)}>↓</button><button type="button" className="quiet" disabled={busy} onClick={() => setTimelineFiles(current => current.filter((_, i) => i !== index))}>×</button></span></li>)}</ol>}
+          {timelineFiles.length > 0 && <ol className="timeline-list">{timelineFiles.map((clip, index) => <li key={clip.filename}><div className="timeline-clip-main"><strong>{index + 1}. {clip.original_name || clip.filename}</strong><small>Full length: {Number(clip.duration).toFixed(1)} sec</small><div className="timeline-trim"><label>IN <input aria-label={'Clip ' + (index + 1) + ' start'} type="number" min="0" max={clip.duration} step="0.1" value={clip.trimStart} disabled={busy} onChange={e => setTimelineFiles(current => current.map((item, i) => i === index ? { ...item, trimStart: e.target.value } : item))} /></label><label>OUT <input aria-label={'Clip ' + (index + 1) + ' end'} type="number" min="0.1" max={clip.duration} step="0.1" value={clip.trimEnd} disabled={busy} onChange={e => setTimelineFiles(current => current.map((item, i) => i === index ? { ...item, trimEnd: e.target.value } : item))} /></label></div><small>Selected: {Math.max(0, Number(clip.trimEnd) - Number(clip.trimStart)).toFixed(1)} sec</small></div><span className="timeline-actions"><button type="button" className="quiet" disabled={busy || index === 0} onClick={() => moveTimelineClip(index, -1)}>↑</button><button type="button" className="quiet" disabled={busy || index === timelineFiles.length - 1} onClick={() => moveTimelineClip(index, 1)}>↓</button><button type="button" className="quiet" disabled={busy} onClick={() => setTimelineFiles(current => current.filter((_, i) => i !== index))}>×</button></span></li>)}</ol>}
           <button className="primary" disabled={busy || timelineFiles.length < 2} onClick={exportTimeline}>EXPORT {timelineFiles.length} CLIPS AS ONE VIDEO</button>
         </div>
         <p className="notice" role="status">{message}</p>
       </div>
     </section>
-    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.4.1</span></footer>
+    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.6.0</span></footer>
   </main>;
 }
 
