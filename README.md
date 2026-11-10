@@ -44,7 +44,7 @@ The React editor can be wrapped in a native Android shell while the FastAPI/FFmp
 
 1. Install Node.js 20+, Java 17, and Android Studio with an Android SDK.
 2. In `frontend/`, install dependencies with `npm install`.
-3. Set `VITE_API_URL` to the public **HTTPS** URL of your running FastAPI backend. Do not use `localhost` in an Android build; on the phone, localhost points to the phone itself.
+3. Copy `frontend/.env.example` to `frontend/.env` and set `VITE_API_URL` to the public **HTTPS** URL of your running FastAPI backend. Do not use `localhost` in an Android build; on the phone, localhost points to the phone itself.
 4. Build the web assets with `npm run build:mobile`.
 5. Add the Android platform once with `npx cap add android`.
 6. Copy web assets and native plugin configuration with `npm run cap:sync`.
