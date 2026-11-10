@@ -263,6 +263,10 @@ function App() {
 
   async function exportFade() {
     if (!video) return;
+    if (info?.duration && fadeIn + fadeOut > info.duration) {
+      setMessage('Fade in aur fade out ka total video duration se zyada nahi ho sakta.');
+      return;
+    }
     setBusy(true); setMessage('Video aur audio par fade effects render ho rahe hain…');
     try {
       const res = await fetch(`${API}/api/export/fade`, {
