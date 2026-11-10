@@ -31,3 +31,15 @@
 .trim-start{z-index:2}
 .trim-end{z-index:3}
 .visual-trim .hint{font-size:11px;margin:10px 0 0}
+
+
+.timeline-visual-trim{height:30px;position:relative;margin:10px 2px 6px;border-radius:6px;background:repeating-linear-gradient(90deg,#25354b 0,#25354b 1px,transparent 1px,transparent 10%),#172438;overflow:hidden}
+.timeline-visual-selection{position:absolute;top:0;bottom:0;background:#36b9ad55;border-left:2px solid #5ce5d4;border-right:2px solid #5ce5d4;pointer-events:none}
+.timeline-range{position:absolute;inset:0;width:100%;height:30px;margin:0;background:transparent;appearance:none;-webkit-appearance:none;pointer-events:none}
+.timeline-range::-webkit-slider-runnable-track{height:30px;background:transparent}
+.timeline-range::-moz-range-track{height:30px;background:transparent}
+.timeline-range::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:14px;height:24px;margin-top:3px;border:2px solid #07131b;border-radius:4px;background:#5ce5d4;pointer-events:auto;cursor:ew-resize}
+.timeline-range::-moz-range-thumb{width:10px;height:20px;border:2px solid #07131b;border-radius:4px;background:#5ce5d4;pointer-events:auto;cursor:ew-resize}
+.timeline-range-start{z-index:2}
+.timeline-range-end{z-index:3}
+.timeline-range:disabled{opacity:.45}
