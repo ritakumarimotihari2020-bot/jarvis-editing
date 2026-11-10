@@ -1,5 +1,12 @@
 # JARVIS AI Video Studio — roadmap
 
+## Implemented in 0.19.0
+- Added Capacitor core, Android platform and CLI dependencies plus mobile build/sync/open scripts
+- Added Capacitor app configuration for the JARVIS Video Studio Android wrapper
+- Improved mobile touch target sizes, safe-area spacing, timeline controls and export-history layout
+- Documented Android Studio build steps and the requirement for a public HTTPS backend URL
+- APK generation and device installation remain unverified and require a local Android SDK/Android Studio build
+
 ## Implemented in 0.18.0
 - Added FFmpeg machine-readable progress output for the final multi-clip transition render
 - Parse FFmpeg elapsed render time and update persistent export job progress up to 99%; mark 100% only after successful completion
@@ -108,7 +115,7 @@ The first caption request downloads Whisper's `base` model, so the server needs 
 
 ## Next milestones
 1. Add automated frontend tests and deployment configuration.
-2. Package the mobile-friendly client as an Android app (Capacitor) after the web workflow is stable.
+2. Generate, sign and test the Capacitor Android APK on real devices.
 
 ## Current limitations
 This is an early editor scaffold, not a full AI editor. The multi-clip timeline supports ordering, per-clip numeric IN/OUT trims, and joining; draggable visual handles are available for both the main single-video trim editor and each multi-clip timeline row; waveform preview is implemented for the main selected video; multi-clip per-row waveforms and audio mixing is implemented for the main selected video; multi-clip soundtrack mixing is not implemented yet. Voice recognition depends on browser support. Whisper captions are optional and are not ready until the AI requirements and model are installed on the server. Subtitle burn-in requires FFmpeg with the subtitles/libass filter available. APK packaging, authentication, and cloud deployment are not implemented yet. Fade and transition effects re-encode video and audio, so export time depends on source length and server CPU. Saved projects store references to uploaded media files; deleting those media files makes their project clips unavailable. Project storage currently has no user authentication or cloud synchronization. Saved projects store references to uploaded media files; deleting those media files makes their project clips unavailable. Project storage currently has no user authentication or cloud synchronization. The API needs FFmpeg and FFprobe on the server. Automated backend API tests are configured in GitHub Actions; frontend build and real video playback/export still need verification.
