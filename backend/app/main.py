@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MEDIA = ROOT / "media"
 MEDIA.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="JARVIS AI Video Studio API", version="0.9.1")
+app = FastAPI(title="JARVIS AI Video Studio API", version="0.10.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,6 +23,7 @@ app.add_middleware(
 app.mount("/media", StaticFiles(directory=MEDIA), name="media")
 
 ALLOWED = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
+ALLOWED_AUDIO = {".mp3", ".wav", ".aac", ".m4a", ".ogg", ".flac"}
 _whisper_model = None
 
 
@@ -58,7 +59,7 @@ def srt_time(seconds: float) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.9.1"}
+    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.10.0"}
 
 
 @app.post("/api/upload")
@@ -136,6 +137,61 @@ def audio_waveform(filename: str, points: int = 240):
         "duration": round(analysed_duration, 3), "truncated": duration > analysed_duration,
         "samples": peaks,
     }
+
+
+@app.post("/api/upload/audio")
+async def upload_audio(file: UploadFile = File(...)):
+    suffix = Path(file.filename or "music.mp3").suffix.lower()
+    if suffix not in ALLOWED_AUDIO:
+        raise HTTPException(status_code=415, detail="Unsupported audio format")
+    name = f"{uuid.uuid4().hex}{suffix}"
+    target = MEDIA / name
+    with target.open("wb") as out:
+        shutil.copyfileobj(file.file, out)
+    return {"filename": name, "original_name": file.filename, "url": f"/media/{name}"}
+
+
+@app.post("/api/export/audio-mix")
+def export_audio_mix(payload: dict):
+    source = get_media_file(payload.get("filename", ""))
+    music = get_media_file(payload.get("audio_filename", ""))
+    if music.suffix.lower() not in ALLOWED_AUDIO:
+        raise HTTPException(status_code=415, detail="Background track must be an audio file")
+    try:
+        music_volume = float(payload.get("music_volume", 0.25))
+        original_volume = float(payload.get("original_volume", 1.0))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Audio volume values must be numbers")
+    if not 0 <= music_volume <= 2 or not 0 <= original_volume <= 2:
+        raise HTTPException(status_code=400, detail="Audio volume must be between 0 and 2")
+    info = run_ffprobe(source)
+    streams = info.get("streams", [])
+    if not any(item.get("codec_type") == "video" for item in streams):
+        raise HTTPException(status_code=422, detail="Source file has no video stream")
+    has_audio = any(item.get("codec_type") == "audio" for item in streams)
+    output_name = f"{source.stem}-music-{uuid.uuid4().hex[:8]}.mp4"
+    output = MEDIA / output_name
+    command = ["ffmpeg", "-y", "-i", str(source), "-stream_loop", "-1", "-i", str(music)]
+    if has_audio:
+        filter_graph = (
+            f"[0:a]volume={original_volume}[original];"
+            f"[1:a]volume={music_volume}[music];"
+            "[original][music]amix=inputs=2:duration=first:dropout_transition=2[mixed]"
+        )
+    else:
+        filter_graph = f"[1:a]volume={music_volume}[mixed]"
+    command += ["-filter_complex", filter_graph, "-map", "0:v:0", "-map", "[mixed]",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-shortest", "-movflags", "+faststart", str(output)]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=422, detail=exc.stderr[-1500:] or "Audio mixing failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Audio mixing timed out")
+    return {"filename": output_name, "url": f"/media/{output_name}"}
 
 
 @app.post("/api/video/{filename}/captions")
