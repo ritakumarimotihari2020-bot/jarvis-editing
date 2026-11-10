@@ -15,7 +15,7 @@ def test_health_reports_current_api_version():
     assert response.json() == {
         "status": "ok",
         "service": "JARVIS AI Video Studio",
-        "version": "0.15.0",
+        "version": "0.16.0",
     }
 
 
@@ -361,7 +361,7 @@ def test_project_name_must_not_be_empty(tmp_path, monkeypatch):
 
 
 def test_transition_export_job_completes_and_returns_result(monkeypatch):
-    monkeypatch.setattr(main, "export_timeline_transition", lambda payload: {
+    monkeypatch.setattr(main, "export_timeline_transition", lambda payload, job_id=None: {
         "filename": "finished.mp4", "url": "/media/finished.mp4",
         "clips": len(payload["clips"]), "transition": payload["transition"],
         "transition_duration": payload["transition_duration"],
@@ -386,4 +386,33 @@ def test_export_job_rejects_invalid_job_id():
 
 def test_export_job_returns_404_for_unknown_id():
     response = client.get("/api/export/jobs/" + "a" * 32)
+    assert response.status_code == 404
+
+ 
+def test_export_job_can_be_cancelled_before_worker_starts():
+    job_id = "b" * 32
+    main._export_jobs[job_id] = {
+        "id": job_id, "status": "queued", "progress": 0,
+        "message": "Export queued", "result": None,
+    }
+    response = client.post(f"/api/export/jobs/{job_id}/cancel")
+    assert response.status_code == 200
+    assert response.json()["cancel_requested"] is True
+    assert main._export_jobs[job_id]["cancel_requested"] is True
+    main._export_jobs.pop(job_id, None)
+
+
+def test_completed_export_job_cannot_be_cancelled():
+    job_id = "c" * 32
+    main._export_jobs[job_id] = {
+        "id": job_id, "status": "completed", "progress": 100,
+        "message": "Export complete", "result": {"filename": "done.mp4"},
+    }
+    response = client.post(f"/api/export/jobs/{job_id}/cancel")
+    assert response.status_code == 409
+    main._export_jobs.pop(job_id, None)
+
+
+def test_cancel_export_job_rejects_unknown_id():
+    response = client.post("/api/export/jobs/" + "d" * 32 + "/cancel")
     assert response.status_code == 404
