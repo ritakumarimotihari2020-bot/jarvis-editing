@@ -28,7 +28,8 @@ app.mount("/media", StaticFiles(directory=MEDIA), name="media")
 
 ALLOWED = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
 ALLOWED_AUDIO = {".mp3", ".wav", ".aac", ".m4a", ".ogg", ".flac"}
-_whisper_model = None\n_export_jobs = {}
+_whisper_model = None
+_export_jobs = {}
 
 
 def get_media_file(filename: str) -> Path:
@@ -233,9 +234,14 @@ def generate_captions(filename: str, language: str = "auto"):
             text = str(segment.get("text", "")).strip()
             if text:
                 blocks.append(
-                    f"{index}\n{srt_time(segment['start'])} --> {srt_time(segment['end'])}\n{text}"
+                    f"{index}
+{srt_time(segment['start'])} --> {srt_time(segment['end'])}
+{text}"
                 )
-        subtitle_path.write_text("\n\n".join(blocks) + "\n", encoding="utf-8")
+        subtitle_path.write_text("
+
+".join(blocks) + "
+", encoding="utf-8")
         return {
             "filename": subtitle_path.name,
             "url": f"/media/{subtitle_path.name}",
@@ -467,7 +473,8 @@ def export_timeline(payload: dict):
             subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
             normalized.append(normalized_file)
         concat_list.write_text(
-            "".join(f"file '{path.name}'\n" for path in normalized), encoding="utf-8"
+            "".join(f"file '{path.name}'
+" for path in normalized), encoding="utf-8"
         )
         subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
