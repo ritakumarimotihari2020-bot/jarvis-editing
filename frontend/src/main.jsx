@@ -36,6 +36,7 @@ function App() {
   const [projectId, setProjectId] = useState('');
   const [projectName, setProjectName] = useState('My JARVIS Edit');
   const [exportJob, setExportJob] = useState(null);
+  const [activeExportJobId, setActiveExportJobId] = useState('');
 
 
 
@@ -232,6 +233,7 @@ function App() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.detail || 'Could not start export job');
       let job;
+      setActiveExportJobId(body.job_id);
       do {
         await new Promise(resolve => setTimeout(resolve, 1500));
         const statusRes = await fetch(API + '/api/export/jobs/' + encodeURIComponent(body.job_id));
@@ -240,6 +242,7 @@ function App() {
         setExportJob(job);
         setMessage(job.message || 'Export running…');
       } while (job.status === 'queued' || job.status === 'running');
+      setActiveExportJobId('');
       if (job.status !== 'completed') throw new Error(job.message || 'Export failed');
       setVideo({ ...job.result, original_name: 'JARVIS Transition Export' });
       setInfo(null); setCaption(null); setCaptionPreview('');
@@ -247,7 +250,17 @@ function App() {
     } catch (err) {
       setExportJob(current => ({ ...(current || {}), status: 'failed', message: err.message }));
       setMessage(err.message);
-    } finally { setBusy(false); }
+    } finally { setActiveExportJobId(''); setBusy(false); }
+  }
+
+  async function cancelExportJob() {
+    if (!activeExportJobId) return;
+    try {
+      const res = await fetch(API + '/api/export/jobs/' + encodeURIComponent(activeExportJobId) + '/cancel', { method: 'POST' });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || 'Could not cancel export');
+      setMessage('Export cancellation requested…');
+    } catch (err) { setMessage(err.message); }
   }
 
   async function upload() {
@@ -535,7 +548,7 @@ function App() {
           <button className="quiet" disabled={busy || timelineFiles.length < 2} onClick={exportTimeline}>EXPORT {timelineFiles.length} CLIPS (HARD CUT)</button>
           <button className="primary" disabled={busy || timelineFiles.length < 2} onClick={exportTimelineWithTransitions}>EXPORT WITH {timelineTransition.toUpperCase()} TRANSITIONS</button>
         </div>
-        {exportJob && <div className="export-job" role="status"><div className="export-job-head"><strong>BACKGROUND EXPORT</strong><span>{exportJob.status.toUpperCase()} · {exportJob.progress || 0}%</span></div><div className="export-progress"><i style={{ width: (exportJob.progress || 0) + '%' }} /></div><small>{exportJob.message}</small></div>}
+        {exportJob && <div className="export-job" role="status"><div className="export-job-head"><strong>BACKGROUND EXPORT</strong><span>{exportJob.status.toUpperCase()} · {exportJob.progress || 0}%</span></div><div className="export-progress"><i style={{ width: (exportJob.progress || 0) + '%' }} /></div><small>{exportJob.message}</small>{activeExportJobId && <button type="button" className="quiet cancel-export" onClick={cancelExportJob}>CANCEL EXPORT</button>}</div>
         <p className="notice" role="status">{message}</p>
       </div>
     </section>
