@@ -51,3 +51,8 @@ The React editor can be wrapped in a native Android shell while the FastAPI/FFmp
 7. Open Android Studio with `npm run cap:open:android`, then build an APK using **Build → Build Bundle(s) / APK(s) → Build APK(s)**.
 
 The generated native `frontend/android/` project is local build output and is not committed by this setup. The APK still needs a reachable backend URL, Android signing for release distribution, and device testing. This repository change does not itself create or install an APK.
+
+
+## Automated Android APK build (GitHub Actions)
+
+The `JARVIS Android APK` workflow builds a debug APK on changes to `frontend/` on the development branch, or when manually started from the Actions tab. Before running it, open **Settings → Secrets and variables → Actions → Variables** and add a repository variable named `VITE_API_URL` containing the public HTTPS URL of the running FastAPI backend. The workflow intentionally stops if this variable is missing or is not HTTPS. When the workflow succeeds, download `app-debug.apk` from its `jarvis-video-studio-debug-apk` artifact on the workflow run page. This is a debug APK, not a signed Play Store release; it still needs real-device testing.
