@@ -25,6 +25,8 @@ function App() {
   const [overlayText, setOverlayText] = useState('');
   const [overlayPosition, setOverlayPosition] = useState('bottom');
   const [overlayFontSize, setOverlayFontSize] = useState(42);
+  const [fadeIn, setFadeIn] = useState(1);
+  const [fadeOut, setFadeOut] = useState(1);
   const [timelineFiles, setTimelineFiles] = useState([]);
   const [timelinePreviewing, setTimelinePreviewing] = useState(false);
   const [timelinePreviewIndex, setTimelinePreviewIndex] = useState(0);
@@ -257,6 +259,27 @@ function App() {
 
 
 
+
+
+  async function exportFade() {
+    if (!video) return;
+    setBusy(true); setMessage('Video aur audio par fade effects render ho rahe hain…');
+    try {
+      const res = await fetch(`${API}/api/export/fade`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          filename: video.filename, fade_in: fadeIn, fade_out: fadeOut
+        })
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || 'Fade export failed');
+      setVideo({ ...body, original_name: 'Fade effects export' });
+      setInfo(null); setCaption(null); setCaptionPreview('');
+      setMessage('Fade in/out effects video aur audio par apply ho gaye. Player menu se MP4 save karein.');
+    } catch (err) { setMessage(err.message); }
+    finally { setBusy(false); }
+  }
+
   async function exportTextOverlay() {
     if (!video || !overlayText.trim()) return;
     setBusy(true); setMessage('Video par text overlay render ho raha hai…');
@@ -353,6 +376,13 @@ function App() {
         <div className="voice-box"><h3>04 / AI AUTO CAPTIONS</h3><p className="hint">Whisper creates a downloadable SRT subtitle file.</p><select value={captionLanguage} onChange={e => setCaptionLanguage(e.target.value)}><option value="auto">Detect language</option><option value="hi">Hindi</option><option value="en">English</option></select><button className="quiet" disabled={!video || busy} onClick={generateCaptions}>{busy ? 'PROCESSING…' : 'GENERATE CAPTIONS'}</button>{caption && <><a className="caption-link" href={`${API}${caption.url}`} download>Download subtitles (.srt) · {caption.segments} lines</a><pre className="caption-preview">{captionPreview.slice(0, 1800)}</pre><button className="primary" disabled={busy} onClick={burnCaptions}>BURN CAPTIONS INTO VIDEO</button></>}</div>
 
 
+
+        <div className="voice-box fade-box"><h3>07 / FADE EFFECTS</h3><p className="hint">Video aur audio dono smooth tareeke se start aur end honge. Duration seconds mein set karein.</p>
+          <label className="volume-control">FADE IN · {Number(fadeIn).toFixed(1)}s<input type="range" min="0" max="10" step="0.5" value={fadeIn} onChange={e => setFadeIn(Number(e.target.value))} disabled={busy} /></label>
+          <label className="volume-control">FADE OUT · {Number(fadeOut).toFixed(1)}s<input type="range" min="0" max="10" step="0.5" value={fadeOut} onChange={e => setFadeOut(Number(e.target.value))} disabled={busy} /></label>
+          <button className="primary" disabled={!video || busy || (fadeIn === 0 && fadeOut === 0)} onClick={exportFade}>APPLY FADES & EXPORT MP4</button>
+        </div>
+
         <div className="voice-box text-overlay-box"><h3>06 / TEXT OVERLAY</h3><p className="hint">Apna title, naam ya message video par lagayein. Export ke baad text video mein permanently rahega.</p>
           <label className="overlay-label">TEXT TO ADD<textarea rows="3" maxLength="300" value={overlayText} onChange={e => setOverlayText(e.target.value)} placeholder="Yahan apna text likhein…" disabled={busy} /></label>
           <label className="overlay-label">TEXT POSITION<select value={overlayPosition} onChange={e => setOverlayPosition(e.target.value)} disabled={busy}><option value="top">Top center</option><option value="center">Center</option><option value="bottom">Bottom center</option><option value="top-left">Top left</option><option value="top-right">Top right</option><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select></label>
@@ -380,7 +410,7 @@ function App() {
         <p className="notice" role="status">{message}</p>
       </div>
     </section>
-    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.11.0</span></footer>
+    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.12.0</span></footer>
   </main>;
 }
 
