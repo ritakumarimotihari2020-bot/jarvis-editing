@@ -31,10 +31,73 @@ function App() {
   const [transitionDuration, setTransitionDuration] = useState(0.75);
   const [timelineFiles, setTimelineFiles] = useState([]);
   const [timelinePreviewing, setTimelinePreviewing] = useState(false);
-  const [timelinePreviewIndex, setTimelinePreviewIndex] = useState(0);
+  const [timelinePreviewIndex, setTimelinePreviewIndex] = useState(0);\n  const [projects, setProjects] = useState([]);\n  const [projectId, setProjectId] = useState('');\n  const [projectName, setProjectName] = useState('My JARVIS Edit');
 
 
-  async function loadWaveform(filename) {
+
+
+  async function refreshProjects() {
+    try {
+      const res = await fetch(API + '/api/projects');
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || 'Could not load projects');
+      setProjects(body.projects || []);
+      setMessage((body.projects || []).length + ' saved project(s) found.');
+    } catch (err) { setMessage(err.message); }
+  }
+
+  async function saveProject() {
+    setBusy(true); setMessage('Editing project save ho raha hai…');
+    try {
+      const state = {
+        timeline_files: timelineFiles,
+        timeline_transition: timelineTransition,
+        transition_duration: transitionDuration,
+        overlay_text: overlayText,
+        overlay_position: overlayPosition,
+        overlay_font_size: overlayFontSize,
+        fade_in: fadeIn, fade_out: fadeOut,
+        music_volume: musicVolume, original_volume: originalVolume,
+        start, duration,
+      };
+      const res = await fetch(API + '/api/projects', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: projectId || undefined, name: projectName, state })
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || 'Project save failed');
+      setProjectId(body.id);
+      await refreshProjects();
+      setMessage('Project "' + body.name + '" safely saved.');
+    } catch (err) { setMessage(err.message); }
+    finally { setBusy(false); }
+  }
+
+  async function loadProject() {
+    if (!projectId) { setMessage('Pehle saved project select karein.'); return; }
+    setBusy(true); setMessage('Saved project load ho raha hai…');
+    try {
+      const res = await fetch(API + '/api/projects/' + encodeURIComponent(projectId));
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || 'Project load failed');
+      const state = body.state || {};
+      setProjectName(body.name || 'My JARVIS Edit');
+      setTimelineFiles(state.timeline_files || []);
+      setTimelineTransition(state.timeline_transition || 'fade');
+      setTransitionDuration(Number(state.transition_duration ?? 0.75));
+      setOverlayText(state.overlay_text || '');
+      setOverlayPosition(state.overlay_position || 'bottom');
+      setOverlayFontSize(Number(state.overlay_font_size || 42));
+      setFadeIn(Number(state.fade_in ?? 1)); setFadeOut(Number(state.fade_out ?? 1));
+      setMusicVolume(Number(state.music_volume ?? 25));
+      setOriginalVolume(Number(state.original_volume ?? 100));
+      setStart(String(state.start ?? '0')); setDuration(String(state.duration ?? '10'));
+      setVideo(null); setInfo(null); setCaption(null); setCaptionPreview('');
+      setMessage('Project loaded. Timeline clips aur editing settings restore ho gaye.');
+    } catch (err) { setMessage(err.message); }
+    finally { setBusy(false); }
+  }
+\n  async function loadWaveform(filename) {
     setWaveform(null);
     try {
       const res = await fetch(`${API}/api/video/${encodeURIComponent(filename)}/waveform?points=240`);
@@ -429,7 +492,16 @@ function App() {
           <button className="primary" disabled={!video || !musicFile || busy} onClick={exportAudioMix}>MIX MUSIC & EXPORT MP4</button>
         </div>
 
-        <div className="voice-box timeline-box"><h3>05 / MULTI-CLIP TIMELINE</h3><p className="hint">Multiple videos add karein, order badlein aur ek MP4 export karein. Maximum 20 clips.</p>
+
+        <div className="voice-box project-box"><h3>08 / SAVE & LOAD PROJECT</h3>
+          <p className="hint">Timeline clips, trims, transitions, text aur fade settings ko project ke roop mein save karein.</p>
+          <label className="overlay-label">PROJECT NAME<input value={projectName} maxLength="80" onChange={e => setProjectName(e.target.value)} disabled={busy} /></label>
+          <button className="primary" disabled={busy || !projectName.trim()} onClick={saveProject}>{projectId ? 'UPDATE SAVED PROJECT' : 'SAVE PROJECT'}</button>
+          <button className="quiet" disabled={busy} onClick={refreshProjects}>REFRESH SAVED PROJECTS</button>
+          <label className="overlay-label">SAVED PROJECT<select value={projectId} onChange={e => setProjectId(e.target.value)} disabled={busy}><option value="">Choose a project…</option>{projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+          <button className="quiet" disabled={busy || !projectId} onClick={loadProject}>LOAD SELECTED PROJECT</button>
+        </div>
+\n        <div className="voice-box timeline-box"><h3>05 / MULTI-CLIP TIMELINE</h3><p className="hint">Multiple videos add karein, order badlein aur ek MP4 export karein. Maximum 20 clips.</p>
           <label className="timeline-add">＋ ADD VIDEO CLIPS<input type="file" accept="video/*" multiple disabled={busy} onChange={e => { addTimelineFiles(e.target.files); e.target.value = ''; }} /></label>
           {timelineFiles.length > 0 && <ol className="timeline-list">{timelineFiles.map((clip, index) => <li key={clip.filename}><div className="timeline-clip-main"><strong>{index + 1}. {clip.original_name || clip.filename}</strong><small>Full length: {Number(clip.duration).toFixed(1)} sec</small><div className="timeline-trim"><label>IN <input aria-label={'Clip ' + (index + 1) + ' start'} type="number" min="0" max={clip.duration} step="0.1" value={clip.trimStart} disabled={busy} onChange={e => setTimelineFiles(current => current.map((item, i) => i === index ? { ...item, trimStart: e.target.value } : item))} /></label><label>OUT <input aria-label={'Clip ' + (index + 1) + ' end'} type="number" min="0.1" max={clip.duration} step="0.1" value={clip.trimEnd} disabled={busy} onChange={e => setTimelineFiles(current => current.map((item, i) => i === index ? { ...item, trimEnd: e.target.value } : item))} /></label></div><div className="timeline-visual-trim" aria-label={'Clip ' + (index + 1) + ' visual trim'}>
                 <div className="timeline-visual-selection" style={{ left: (Math.min(100, Math.max(0, Number(clip.trimStart) / Number(clip.duration) * 100))) + '%', width: (Math.max(0, Math.min(100, Number(clip.trimEnd) / Number(clip.duration) * 100) - Math.min(100, Math.max(0, Number(clip.trimStart) / Number(clip.duration) * 100)))) + '%' }} />
@@ -447,7 +519,7 @@ function App() {
         <p className="notice" role="status">{message}</p>
       </div>
     </section>
-    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.13.0</span></footer>
+    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.14.0</span></footer>
   </main>;
 }
 
