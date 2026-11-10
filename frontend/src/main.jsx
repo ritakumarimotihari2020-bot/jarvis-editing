@@ -271,7 +271,7 @@ function App() {
           <div className="visual-trim-labels"><span>0:00</span><strong>SELECTED RANGE</strong><span>{info.duration.toFixed(1)}s</span></div>
           <div className="visual-trim-track">
             <div className="visual-trim-selection" style={{ left: (Math.min(100, Math.max(0, Number(start) / clipDuration * 100))) + '%', width: (Math.max(0, Math.min(100, trimEnd / clipDuration * 100) - Math.min(100, Math.max(0, Number(start) / clipDuration * 100))) + '%' }} />
-            <input aria-label="Drag trim start handle" className="trim-range trim-start" type="range" min="0" max={clipDuration} step="0.1" value={Math.min(clipDuration, Math.max(0, Number(start) || 0))} onChange={e => { const next = Number(e.target.value); setStart(String(next)); if (trimEnd <= next) setDuration(String(Math.max(0.1, clipDuration - next))); }} />
+            <input aria-label="Drag trim start handle" className="trim-range trim-start" type="range" min="0" max={Math.max(0, clipDuration - 0.1)} step="0.1" value={Math.min(Math.max(0, clipDuration - 0.1), Math.max(0, Number(start) || 0))} onChange={e => { const next = Number(e.target.value); setStart(String(next)); if (trimEnd <= next) setDuration(String(Math.max(0.1, clipDuration - next))); }} />
             <input aria-label="Drag trim end handle" className="trim-range trim-end" type="range" min="0.1" max={clipDuration} step="0.1" value={Math.min(clipDuration, Math.max(0.1, trimEnd))} onChange={e => { const next = Number(e.target.value); if (next > Number(start)) setDuration(String((next - Number(start)).toFixed(1))); }} />
           </div>
           <p className="hint">Dono handles ko drag karke video ka start aur end select karein.</p>
