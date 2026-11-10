@@ -173,7 +173,7 @@ function App() {
         <p className="notice" role="status">{message}</p>
       </div>
     </section>
-    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.4.0</span></footer>
+    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.4.1</span></footer>
   </main>;
 }
 
