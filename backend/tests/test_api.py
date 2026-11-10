@@ -15,7 +15,7 @@ def test_health_reports_current_api_version():
     assert response.json() == {
         "status": "ok",
         "service": "JARVIS AI Video Studio",
-        "version": "0.11.0",
+        "version": "0.12.0",
     }
 
 
@@ -168,3 +168,67 @@ def test_text_overlay_renders_and_cleans_temporary_text_file(tmp_path, monkeypat
     assert captured["text"] == "नमस्ते JARVIS"
     assert "expansion=none" in captured["command"][captured["command"].index("-vf") + 1]
     assert not list(tmp_path.glob("overlay-*.txt"))
+
+
+def test_fade_rejects_negative_duration_before_ffmpeg(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(main, "MEDIA", tmp_path)
+    monkeypatch.setattr(main, "run_ffprobe", lambda _source: {
+        "streams": [{"codec_type": "video"}], "format": {"duration": "10"}
+    })
+    response = client.post("/api/export/fade", json={
+        "filename": source.name, "fade_in": -1, "fade_out": 0
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Fade durations cannot be negative"
+
+
+def test_fade_rejects_combined_duration_longer_than_video(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(main, "MEDIA", tmp_path)
+    monkeypatch.setattr(main, "run_ffprobe", lambda _source: {
+        "streams": [{"codec_type": "video"}], "format": {"duration": "10"}
+    })
+    response = client.post("/api/export/fade", json={
+        "filename": source.name, "fade_in": 6, "fade_out": 5
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Combined fade durations cannot exceed video duration"
+
+
+def test_fade_requires_at_least_one_effect(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(main, "MEDIA", tmp_path)
+    monkeypatch.setattr(main, "run_ffprobe", lambda _source: {
+        "streams": [{"codec_type": "video"}], "format": {"duration": "10"}
+    })
+    response = client.post("/api/export/fade", json={
+        "filename": source.name, "fade_in": 0, "fade_out": 0
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Set fade-in or fade-out duration"
+
+
+def test_fade_builds_video_filter_for_silent_video(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(main, "MEDIA", tmp_path)
+    monkeypatch.setattr(main, "run_ffprobe", lambda _source: {
+        "streams": [{"codec_type": "video"}], "format": {"duration": "10"}
+    })
+    captured = {}
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        Path(command[-1]).write_bytes(b"rendered")
+    monkeypatch.setattr(main.subprocess, "run", fake_run)
+    response = client.post("/api/export/fade", json={
+        "filename": source.name, "fade_in": 1.5, "fade_out": 2
+    })
+    assert response.status_code == 200
+    graph = captured["command"][captured["command"].index("-filter_complex") + 1]
+    assert "fade=t=in:st=0:d=1.5" in graph
+    assert "fade=t=out:st=8.0:d=2.0" in graph
+    assert "[a]" not in graph
