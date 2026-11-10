@@ -36,3 +36,18 @@ The frontend defaults to `http://localhost:8000` for the API. Set `VITE_API_URL`
 - Export MP4 using FFmpeg
 
 This is an initial scaffold, not yet a complete AI editor or installable APK. See [`docs/ROADMAP.md`](docs/ROADMAP.md) for planned AI and Android milestones.
+
+
+## Android app (Capacitor)
+
+The React editor can be wrapped in a native Android shell while the FastAPI/FFmpeg backend remains hosted separately.
+
+1. Install Node.js 20+, Java 17, and Android Studio with an Android SDK.
+2. In `frontend/`, install dependencies with `npm install`.
+3. Set `VITE_API_URL` to the public **HTTPS** URL of your running FastAPI backend. Do not use `localhost` in an Android build; on the phone, localhost points to the phone itself.
+4. Build the web assets with `npm run build:mobile`.
+5. Add the Android platform once with `npx cap add android`.
+6. Copy web assets and native plugin configuration with `npm run cap:sync`.
+7. Open Android Studio with `npm run cap:open:android`, then build an APK using **Build → Build Bundle(s) / APK(s) → Build APK(s)**.
+
+The generated native `frontend/android/` project is local build output and is not committed by this setup. The APK still needs a reachable backend URL, Android signing for release distribution, and device testing. This repository change does not itself create or install an APK.
