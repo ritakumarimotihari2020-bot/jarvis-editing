@@ -47,6 +47,8 @@ def _persist_export_jobs():
     path = _export_history_path()
     temporary = path.with_suffix(".json.tmp")
     records = sorted(_export_jobs.values(), key=lambda item: item.get("created_at", ""), reverse=True)[:100]
+    _export_jobs.clear()
+    _export_jobs.update({item["id"]: item for item in records})
     temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary.replace(path)
 
