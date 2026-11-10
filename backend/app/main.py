@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import math
+import re
 import shutil
 import subprocess
 import uuid
@@ -12,8 +13,10 @@ from fastapi.staticfiles import StaticFiles
 ROOT = Path(__file__).resolve().parent.parent
 MEDIA = ROOT / "media"
 MEDIA.mkdir(parents=True, exist_ok=True)
+PROJECTS = ROOT / "projects"
+PROJECTS.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="JARVIS AI Video Studio API", version="0.13.0")
+app = FastAPI(title="JARVIS AI Video Studio API", version="0.14.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -60,7 +63,7 @@ def srt_time(seconds: float) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.13.0"}
+    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.14.0"}
 
 
 @app.post("/api/upload")
@@ -619,3 +622,95 @@ def trim_video(payload: dict):
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Export timed out")
     return {"filename": output_name, "url": f"/media/{output_name}"}
+
+
+def project_path(project_id: str) -> Path:
+    if not re.fullmatch(r"[a-f0-9]{32}", str(project_id)):
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+    return PROJECTS / f"{project_id}.json"
+
+
+@app.get("/api/projects")
+def list_projects():
+    projects = []
+    for path in PROJECTS.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            projects.append({
+                "id": path.stem,
+                "name": data.get("name", "Untitled project"),
+                "updated_at": data.get("updated_at"),
+            })
+        except (OSError, ValueError):
+            continue
+    projects.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
+    return {"projects": projects}
+
+
+@app.post("/api/projects")
+def save_project(payload: dict):
+    name = str(payload.get("name", "Untitled project")).strip()
+    if not name or len(name) > 80:
+        raise HTTPException(status_code=400, detail="Project name must be 1–80 characters")
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        raise HTTPException(status_code=400, detail="Project state must be an object")
+    clips = state.get("timeline_files", [])
+    if not isinstance(clips, list) or len(clips) > 20:
+        raise HTTPException(status_code=400, detail="Project can contain up to 20 timeline clips")
+    safe_clips = []
+    for clip in clips:
+        if not isinstance(clip, dict):
+            raise HTTPException(status_code=400, detail="Invalid timeline clip")
+        source = get_media_file(clip.get("filename", ""))
+        try:
+            duration = float(clip.get("duration", 0))
+            trim_start = float(clip.get("trimStart", 0))
+            trim_end = float(clip.get("trimEnd", duration))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid saved clip timing")
+        if duration <= 0 or trim_start < 0 or trim_end <= trim_start or trim_end > duration + 0.05:
+            raise HTTPException(status_code=400, detail="Saved clip trim range is invalid")
+        safe_clips.append({
+            "filename": source.name,
+            "url": f"/media/{source.name}",
+            "original_name": str(clip.get("original_name", source.name))[:255],
+            "duration": duration, "trimStart": trim_start, "trimEnd": trim_end,
+        })
+    project_id = str(payload.get("id") or uuid.uuid4().hex)
+    target = project_path(project_id)
+    from datetime import datetime, timezone
+    existing = {}
+    if target.is_file():
+        try:
+            existing = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            existing = {}
+    document = {
+        "id": project_id, "name": name, "state": {**state, "timeline_files": safe_clips},
+        "created_at": existing.get("created_at") or datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    target.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"id": project_id, "name": name, "updated_at": document["updated_at"]}
+
+
+@app.get("/api/projects/{project_id}")
+def load_project(project_id: str):
+    target = project_path(project_id)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        document = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise HTTPException(status_code=500, detail="Saved project is unreadable")
+    return document
+
+
+@app.delete("/api/projects/{project_id}")
+def delete_project(project_id: str):
+    target = project_path(project_id)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Project not found")
+    target.unlink()
+    return {"deleted": True, "id": project_id}
