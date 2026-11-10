@@ -18,6 +18,60 @@ function App() {
   const [caption, setCaption] = useState(null);
   const [captionLanguage, setCaptionLanguage] = useState('auto');
   const [captionPreview, setCaptionPreview] = useState('');
+  const [timelineFiles, setTimelineFiles] = useState([]);
+
+
+  async function addTimelineFiles(files) {
+    const selected = Array.from(files || []).filter(item => item.type.startsWith('video/'));
+    if (!selected.length) return;
+    if (timelineFiles.length + selected.length > 20) {
+      setMessage('Timeline mein maximum 20 clips add kar sakte hain.');
+      return;
+    }
+    setBusy(true); setMessage('Timeline clips upload ho rahe hain…');
+    try {
+      const added = [];
+      for (const item of selected) {
+        const data = new FormData(); data.append('file', item);
+        const res = await fetch(API + '/api/upload', { method: 'POST', body: data });
+        const body = await res.json();
+        if (!res.ok) throw new Error(body.detail || ('Upload failed: ' + item.name));
+        added.push(body);
+      }
+      setTimelineFiles(current => [...current, ...added]);
+      setMessage(added.length + ' clip(s) timeline mein add ho gaye.');
+    } catch (err) { setMessage(err.message); }
+    finally { setBusy(false); }
+  }
+
+  function moveTimelineClip(index, direction) {
+    setTimelineFiles(current => {
+      const next = [...current], target = index + direction;
+      if (target < 0 || target >= next.length) return current;
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  }
+
+  async function exportTimeline() {
+    if (timelineFiles.length < 2) {
+      setMessage('Timeline export ke liye kam se kam 2 clips add karein.');
+      return;
+    }
+    setBusy(true); setMessage('Timeline render ho rahi hai. Multiple clips mein time lag sakta hai…');
+    try {
+      const res = await fetch(API + '/api/export/timeline', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filenames: timelineFiles.map(item => item.filename) })
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || 'Timeline export failed');
+      setVideo({ ...body, original_name: 'JARVIS Timeline Export' });
+      setInfo(null); setCaption(null); setCaptionPreview('');
+      setMessage(body.clips + ' clips successfully joined. Player menu se video save karein.');
+    } catch (err) { setMessage(err.message); }
+    finally { setBusy(false); }
+  }
 
   async function upload() {
     if (!file) return;
@@ -170,6 +224,12 @@ function App() {
         <button className="primary" disabled={!video || busy} onClick={exportTrim}>{busy ? 'WORKING…' : '✦  EXPORT VIDEO'}</button>
         <div className="voice-box"><h3>03 / JARVIS VOICE COMMAND</h3><p className="hint">Try “start time 5”, “duration 20”, “export video” or “अपलोड”</p><button className="quiet" disabled={busy || listening} onClick={startListening}>{listening ? 'LISTENING…' : '🎙️  SPEAK COMMAND'}</button>{commandText && <small>Heard: {commandText}</small>}</div>
         <div className="voice-box"><h3>04 / AI AUTO CAPTIONS</h3><p className="hint">Whisper creates a downloadable SRT subtitle file.</p><select value={captionLanguage} onChange={e => setCaptionLanguage(e.target.value)}><option value="auto">Detect language</option><option value="hi">Hindi</option><option value="en">English</option></select><button className="quiet" disabled={!video || busy} onClick={generateCaptions}>{busy ? 'PROCESSING…' : 'GENERATE CAPTIONS'}</button>{caption && <><a className="caption-link" href={`${API}${caption.url}`} download>Download subtitles (.srt) · {caption.segments} lines</a><pre className="caption-preview">{captionPreview.slice(0, 1800)}</pre><button className="primary" disabled={busy} onClick={burnCaptions}>BURN CAPTIONS INTO VIDEO</button></>}</div>
+
+        <div className="voice-box timeline-box"><h3>05 / MULTI-CLIP TIMELINE</h3><p className="hint">Multiple videos add karein, order badlein aur ek MP4 export karein. Maximum 20 clips.</p>
+          <label className="timeline-add">＋ ADD VIDEO CLIPS<input type="file" accept="video/*" multiple disabled={busy} onChange={e => { addTimelineFiles(e.target.files); e.target.value = ''; }} /></label>
+          {timelineFiles.length > 0 && <ol className="timeline-list">{timelineFiles.map((clip, index) => <li key={clip.filename}><span>{index + 1}. {clip.original_name || clip.filename}</span><span className="timeline-actions"><button type="button" className="quiet" disabled={busy || index === 0} onClick={() => moveTimelineClip(index, -1)}>↑</button><button type="button" className="quiet" disabled={busy || index === timelineFiles.length - 1} onClick={() => moveTimelineClip(index, 1)}>↓</button><button type="button" className="quiet" disabled={busy} onClick={() => setTimelineFiles(current => current.filter((_, i) => i !== index))}>×</button></span></li>)}</ol>}
+          <button className="primary" disabled={busy || timelineFiles.length < 2} onClick={exportTimeline}>EXPORT {timelineFiles.length} CLIPS AS ONE VIDEO</button>
+        </div>
         <p className="notice" role="status">{message}</p>
       </div>
     </section>
