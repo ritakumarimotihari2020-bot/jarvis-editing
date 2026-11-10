@@ -17,7 +17,7 @@ MEDIA.mkdir(parents=True, exist_ok=True)
 PROJECTS = ROOT / "projects"
 PROJECTS.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="JARVIS AI Video Studio API", version="0.17.0")
+app = FastAPI(title="JARVIS AI Video Studio API", version="0.18.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -117,7 +117,7 @@ def srt_time(seconds: float) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.17.0"}
+    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.18.0"}
 
 
 @app.post("/api/upload")
@@ -541,41 +541,112 @@ def export_timeline(payload: dict):
     return {"filename": output_name, "url": f"/media/{output_name}", "clips": len(prepared)}
 
 
-def _run_export_process(command, job_id=None, timeout=1800):
-    """Run an FFmpeg step that can be stopped by its owning export job."""
+def _ffmpeg_progress_percent(progress_line, expected_duration):
+    """Convert an FFmpeg -progress out_time line into a safe 0..99 percentage."""
+    if expected_duration <= 0 or "=" not in progress_line:
+        return None
+    key, value = progress_line.strip().split("=", 1)
+    if key == "out_time_ms":
+        try:
+            elapsed = float(value) / 1_000_000
+        except ValueError:
+            return None
+    elif key == "out_time":
+        match = re.fullmatch(r"(\\d+):(\\d+):(\\d+(?:\\.\\d+)?)", value)
+        if not match:
+            return None
+        hours, minutes, seconds = match.groups()
+        elapsed = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    else:
+        return None
+    return max(0, min(99, int(elapsed / expected_duration * 100)))
+
+
+def _run_export_process(command, job_id=None, timeout=1800, expected_duration=None):
+    """Run an FFmpeg step with cancellation and optional real render progress."""
     if not job_id:
         return subprocess.run(command, check=True, capture_output=True, text=True, timeout=timeout)
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    if job_id:
-        _export_processes[job_id] = process
+    import queue
+    import threading
+    import time
+
+    progress_command = list(command)
+    if expected_duration and "-progress" not in progress_command:
+        progress_command[-1:-1] = ["-progress", "pipe:1", "-nostats"]
+    process = subprocess.Popen(progress_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, bufsize=1)
+    _export_processes[job_id] = process
+    stdout_queue = queue.Queue()
+    stderr_parts = []
+
+    def read_stdout():
+        try:
+            for line in process.stdout:
+                stdout_queue.put(line)
+        finally:
+            stdout_queue.put(None)
+
+    def read_stderr():
+        for line in process.stderr:
+            stderr_parts.append(line)
+
+    stdout_thread = threading.Thread(target=read_stdout, daemon=True)
+    stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+    stdout_thread.start()
+    stderr_thread.start()
+    stdout_parts = []
+    deadline = time.monotonic() + timeout
+    last_progress = None
+    stdout_done = False
     try:
-        import time
-        deadline = time.monotonic() + timeout
-        while True:
-            if job_id and _export_jobs.get(job_id, {}).get("cancel_requested"):
+        while process.poll() is None or not stdout_done:
+            if _export_jobs.get(job_id, {}).get("cancel_requested"):
                 process.terminate()
                 try:
-                    stdout, stderr = process.communicate(timeout=5)
+                    process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     process.kill()
-                    stdout, stderr = process.communicate()
+                    process.wait()
                 raise InterruptedError("Export cancelled by user")
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 process.kill()
-                stdout, stderr = process.communicate()
-                raise subprocess.TimeoutExpired(command, timeout, output=stdout, stderr=stderr)
+                process.wait()
+                raise subprocess.TimeoutExpired(progress_command, timeout,
+                                                output="".join(stdout_parts), stderr="".join(stderr_parts))
             try:
-                stdout, stderr = process.communicate(timeout=min(0.25, remaining))
-                break
-            except subprocess.TimeoutExpired:
+                line = stdout_queue.get(timeout=min(0.2, remaining))
+                if line is None:
+                    stdout_done = True
+                else:
+                    stdout_parts.append(line)
+                    if expected_duration:
+                        percent = _ffmpeg_progress_percent(line, expected_duration)
+                        if percent is not None and percent != last_progress:
+                            last_progress = percent
+                            job = _export_jobs.get(job_id, {})
+                            if job and job.get("status") == "running":
+                                _update_export_job(job_id, {
+                                    "progress": max(5, percent),
+                                    "message": f"Rendering video · {max(5, percent)}%",
+                                })
+            except queue.Empty:
                 continue
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        stdout = "".join(stdout_parts)
+        stderr = "".join(stderr_parts)
         if process.returncode:
-            raise subprocess.CalledProcessError(process.returncode, command, output=stdout, stderr=stderr)
-        return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+            raise subprocess.CalledProcessError(process.returncode, progress_command,
+                                                output=stdout, stderr=stderr)
+        return subprocess.CompletedProcess(progress_command, process.returncode, stdout, stderr)
     finally:
-        if job_id:
-            _export_processes.pop(job_id, None)
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        _export_processes.pop(job_id, None)
 
 
 @app.post("/api/export/timeline-transition")
@@ -666,7 +737,7 @@ def export_timeline_transition(payload: dict, job_id: str | None = None):
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
         ]
-        _run_export_process(command, job_id=job_id, timeout=3600)
+        _run_export_process(command, job_id=job_id, timeout=3600, expected_duration=elapsed)
     except FileNotFoundError:
         raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
     except subprocess.CalledProcessError as exc:
