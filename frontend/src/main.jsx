@@ -31,7 +31,11 @@ function App() {
   const [transitionDuration, setTransitionDuration] = useState(0.75);
   const [timelineFiles, setTimelineFiles] = useState([]);
   const [timelinePreviewing, setTimelinePreviewing] = useState(false);
-  const [timelinePreviewIndex, setTimelinePreviewIndex] = useState(0);\n  const [projects, setProjects] = useState([]);\n  const [projectId, setProjectId] = useState('');\n  const [projectName, setProjectName] = useState('My JARVIS Edit');
+  const [timelinePreviewIndex, setTimelinePreviewIndex] = useState(0);
+  const [projects, setProjects] = useState([]);
+  const [projectId, setProjectId] = useState('');
+  const [projectName, setProjectName] = useState('My JARVIS Edit');
+  const [exportJob, setExportJob] = useState(null);
 
 
 
@@ -97,7 +101,8 @@ function App() {
     } catch (err) { setMessage(err.message); }
     finally { setBusy(false); }
   }
-\n  async function loadWaveform(filename) {
+
+  async function loadWaveform(filename) {
     setWaveform(null);
     try {
       const res = await fetch(`${API}/api/video/${encodeURIComponent(filename)}/waveform?points=240`);
@@ -214,9 +219,10 @@ function App() {
     if (timelineFiles.some(item => Number(item.trimEnd) - Number(item.trimStart) <= transitionDuration)) {
       setMessage('Har selected clip transition duration se lambi honi chahiye.'); return;
     }
-    setBusy(true); setMessage('Smooth transitions render ho rahe hain…');
+    setBusy(true); setExportJob({ status: 'queued', progress: 0, message: 'Export queued' });
+    setMessage('Background export job start ho raha hai…');
     try {
-      const res = await fetch(API + '/api/export/timeline-transition', {
+      const res = await fetch(API + '/api/export/jobs/timeline-transition', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           clips: timelineFiles.map(item => ({ filename: item.filename, start: Number(item.trimStart), end: Number(item.trimEnd) })),
@@ -224,12 +230,24 @@ function App() {
         })
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.detail || 'Transition export failed');
-      setVideo({ ...body, original_name: 'JARVIS Transition Export' });
+      if (!res.ok) throw new Error(body.detail || 'Could not start export job');
+      let job;
+      do {
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        const statusRes = await fetch(API + '/api/export/jobs/' + encodeURIComponent(body.job_id));
+        job = await statusRes.json();
+        if (!statusRes.ok) throw new Error(job.detail || 'Could not read export status');
+        setExportJob(job);
+        setMessage(job.message || 'Export running…');
+      } while (job.status === 'queued' || job.status === 'running');
+      if (job.status !== 'completed') throw new Error(job.message || 'Export failed');
+      setVideo({ ...job.result, original_name: 'JARVIS Transition Export' });
       setInfo(null); setCaption(null); setCaptionPreview('');
-      setMessage(body.clips + ' clips with ' + body.transition + ' transitions exported successfully.');
-    } catch (err) { setMessage(err.message); }
-    finally { setBusy(false); }
+      setMessage('Transition export complete. MP4 ready.');
+    } catch (err) {
+      setExportJob(current => ({ ...(current || {}), status: 'failed', message: err.message }));
+      setMessage(err.message);
+    } finally { setBusy(false); }
   }
 
   async function upload() {
@@ -501,7 +519,8 @@ function App() {
           <label className="overlay-label">SAVED PROJECT<select value={projectId} onChange={e => setProjectId(e.target.value)} disabled={busy}><option value="">Choose a project…</option>{projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
           <button className="quiet" disabled={busy || !projectId} onClick={loadProject}>LOAD SELECTED PROJECT</button>
         </div>
-\n        <div className="voice-box timeline-box"><h3>05 / MULTI-CLIP TIMELINE</h3><p className="hint">Multiple videos add karein, order badlein aur ek MP4 export karein. Maximum 20 clips.</p>
+
+        <div className="voice-box timeline-box"><h3>05 / MULTI-CLIP TIMELINE</h3><p className="hint">Multiple videos add karein, order badlein aur ek MP4 export karein. Maximum 20 clips.</p>
           <label className="timeline-add">＋ ADD VIDEO CLIPS<input type="file" accept="video/*" multiple disabled={busy} onChange={e => { addTimelineFiles(e.target.files); e.target.value = ''; }} /></label>
           {timelineFiles.length > 0 && <ol className="timeline-list">{timelineFiles.map((clip, index) => <li key={clip.filename}><div className="timeline-clip-main"><strong>{index + 1}. {clip.original_name || clip.filename}</strong><small>Full length: {Number(clip.duration).toFixed(1)} sec</small><div className="timeline-trim"><label>IN <input aria-label={'Clip ' + (index + 1) + ' start'} type="number" min="0" max={clip.duration} step="0.1" value={clip.trimStart} disabled={busy} onChange={e => setTimelineFiles(current => current.map((item, i) => i === index ? { ...item, trimStart: e.target.value } : item))} /></label><label>OUT <input aria-label={'Clip ' + (index + 1) + ' end'} type="number" min="0.1" max={clip.duration} step="0.1" value={clip.trimEnd} disabled={busy} onChange={e => setTimelineFiles(current => current.map((item, i) => i === index ? { ...item, trimEnd: e.target.value } : item))} /></label></div><div className="timeline-visual-trim" aria-label={'Clip ' + (index + 1) + ' visual trim'}>
                 <div className="timeline-visual-selection" style={{ left: (Math.min(100, Math.max(0, Number(clip.trimStart) / Number(clip.duration) * 100))) + '%', width: (Math.max(0, Math.min(100, Number(clip.trimEnd) / Number(clip.duration) * 100) - Math.min(100, Math.max(0, Number(clip.trimStart) / Number(clip.duration) * 100)))) + '%' }} />
@@ -516,6 +535,7 @@ function App() {
           <button className="quiet" disabled={busy || timelineFiles.length < 2} onClick={exportTimeline}>EXPORT {timelineFiles.length} CLIPS (HARD CUT)</button>
           <button className="primary" disabled={busy || timelineFiles.length < 2} onClick={exportTimelineWithTransitions}>EXPORT WITH {timelineTransition.toUpperCase()} TRANSITIONS</button>
         </div>
+        {exportJob && <div className="export-job" role="status"><div className="export-job-head"><strong>BACKGROUND EXPORT</strong><span>{exportJob.status.toUpperCase()} · {exportJob.progress || 0}%</span></div><div className="export-progress"><i style={{ width: (exportJob.progress || 0) + '%' }} /></div><small>{exportJob.message}</small></div>}
         <p className="notice" role="status">{message}</p>
       </div>
     </section>
