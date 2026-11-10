@@ -1,0 +1,8 @@
+{
+  "appId": "com.jarvis.videostudio",
+  "appName": "JARVIS Video Studio",
+  "webDir": "dist",
+  "android": {
+    "allowMixedContent": false
+  }
+}
