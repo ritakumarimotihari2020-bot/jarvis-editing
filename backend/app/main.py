@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MEDIA = ROOT / "media"
 MEDIA.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="JARVIS AI Video Studio API", version="0.2.0")
+app = FastAPI(title="JARVIS AI Video Studio API", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,6 +23,7 @@ app.add_middleware(
 app.mount("/media", StaticFiles(directory=MEDIA), name="media")
 
 ALLOWED = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
+_whisper_model = None
 
 
 def get_media_file(filename: str) -> Path:
@@ -47,9 +48,17 @@ def run_ffprobe(source: Path) -> dict:
     return json.loads(result.stdout)
 
 
+def srt_time(seconds: float) -> str:
+    millis = max(0, round(float(seconds) * 1000))
+    hours, millis = divmod(millis, 3_600_000)
+    minutes, millis = divmod(millis, 60_000)
+    secs, millis = divmod(millis, 1000)
+    return f"{hours:02}:{minutes:02}:{secs:02},{millis:03}"
+
+
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.2.0"}
+    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.3.0"}
 
 
 @app.post("/api/upload")
@@ -82,6 +91,60 @@ def video_info(filename: str):
         "has_audio": bool(audio_stream),
         "size_bytes": source.stat().st_size,
     }
+
+
+@app.post("/api/video/{filename}/captions")
+def generate_captions(filename: str, language: str = "auto"):
+    """Generate an SRT subtitle file using the optional local Whisper model."""
+    global _whisper_model
+    source = get_media_file(filename)
+    if language not in {"auto", "hi", "en"}:
+        raise HTTPException(status_code=400, detail="Language must be auto, hi or en")
+    try:
+        import whisper
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="Auto captions need the optional AI packages. Install backend/requirements-ai.txt first.",
+        )
+    audio_path = MEDIA / f"{uuid.uuid4().hex}.wav"
+    subtitle_path = MEDIA / f"{source.stem}-captions-{uuid.uuid4().hex[:8]}.srt"
+    try:
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(source), "-vn", "-ac", "1", "-ar", "16000", str(audio_path)],
+            check=True, capture_output=True, text=True, timeout=600,
+        )
+        if _whisper_model is None:
+            _whisper_model = whisper.load_model("base")
+        result = _whisper_model.transcribe(
+            str(audio_path), language=None if language == "auto" else language,
+            task="transcribe", fp16=False,
+        )
+        segments = result.get("segments", [])
+        if not segments:
+            raise HTTPException(status_code=422, detail="No speech was detected in this video")
+        blocks = []
+        for index, segment in enumerate(segments, 1):
+            text = str(segment.get("text", "")).strip()
+            if text:
+                blocks.append(
+                    f"{index}\n{srt_time(segment['start'])} --> {srt_time(segment['end'])}\n{text}"
+                )
+        subtitle_path.write_text("\n\n".join(blocks) + "\n", encoding="utf-8")
+        return {
+            "filename": subtitle_path.name,
+            "url": f"/media/{subtitle_path.name}",
+            "language": result.get("language", language),
+            "segments": len(blocks),
+        }
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=422, detail=exc.stderr[-1200:] or "Audio extraction failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Audio extraction timed out")
+    finally:
+        audio_path.unlink(missing_ok=True)
 
 
 @app.post("/api/export/trim")
