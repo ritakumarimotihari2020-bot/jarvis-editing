@@ -1,18 +1,23 @@
 from pathlib import Path
 import json
+import math
+import re
 import shutil
 import subprocess
 import uuid
+from datetime import datetime, timezone
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 ROOT = Path(__file__).resolve().parent.parent
 MEDIA = ROOT / "media"
 MEDIA.mkdir(parents=True, exist_ok=True)
+PROJECTS = ROOT / "projects"
+PROJECTS.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="JARVIS AI Video Studio API", version="0.4.0")
+app = FastAPI(title="JARVIS AI Video Studio API", version="0.20.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -23,7 +28,61 @@ app.add_middleware(
 app.mount("/media", StaticFiles(directory=MEDIA), name="media")
 
 ALLOWED = {".mp4", ".mov", ".mkv", ".webm", ".avi"}
+ALLOWED_AUDIO = {".mp3", ".wav", ".aac", ".m4a", ".ogg", ".flac"}
 _whisper_model = None
+_export_jobs = {}
+_export_processes = {}
+
+
+def _utc_now():
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _export_history_path():
+    return PROJECTS / "export_jobs.json"
+
+
+def _persist_export_jobs():
+    PROJECTS.mkdir(parents=True, exist_ok=True)
+    path = _export_history_path()
+    temporary = path.with_suffix(".json.tmp")
+    records = sorted(_export_jobs.values(), key=lambda item: item.get("created_at", ""), reverse=True)[:100]
+    _export_jobs.clear()
+    _export_jobs.update({item["id"]: item for item in records})
+    temporary.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _load_export_jobs():
+    path = _export_history_path()
+    if not path.is_file():
+        return
+    try:
+        records = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(records, list):
+            return
+        for job in records[:100]:
+            if not isinstance(job, dict) or not re.fullmatch(r"[a-f0-9]{32}", str(job.get("id", ""))):
+                continue
+            if job.get("status") in {"queued", "running"}:
+                job.update({"status": "interrupted", "progress": 0, "message": "API restarted before this export finished", "cancel_requested": False})
+                job["finished_at"] = _utc_now()
+            _export_jobs[job["id"]] = job
+        _persist_export_jobs()
+    except (OSError, ValueError, TypeError):
+        return
+
+
+def _update_export_job(job_id, changes):
+    job = _export_jobs[job_id]
+    job.update(changes)
+    if job.get("status") in {"completed", "failed", "cancelled", "interrupted"}:
+        job.setdefault("finished_at", _utc_now())
+    _persist_export_jobs()
+    return job
+
+
+_load_export_jobs()
 
 
 def get_media_file(filename: str) -> Path:
@@ -58,7 +117,7 @@ def srt_time(seconds: float) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.4.0"}
+    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.20.0"}
 
 
 @app.post("/api/upload")
@@ -91,6 +150,106 @@ def video_info(filename: str):
         "has_audio": bool(audio_stream),
         "size_bytes": source.stat().st_size,
     }
+
+
+@app.get("/api/video/{filename}/waveform")
+def audio_waveform(filename: str, points: int = 240):
+    """Return a compact audio amplitude envelope for timeline visualization."""
+    source = get_media_file(filename)
+    points = min(600, max(32, points))
+    info = run_ffprobe(source)
+    streams = info.get("streams", [])
+    audio_stream = next((item for item in streams if item.get("codec_type") == "audio"), None)
+    if not audio_stream:
+        return {"filename": source.name, "has_audio": False, "duration": 0, "samples": []}
+    duration = float(info.get("format", {}).get("duration") or audio_stream.get("duration") or 0)
+    if duration <= 0:
+        raise HTTPException(status_code=422, detail="Audio duration is unavailable")
+    # Bound processing time and response size for long uploads.
+    analysed_duration = min(duration, 300.0)
+    command = [
+        "ffmpeg", "-v", "error", "-i", str(source), "-t", str(analysed_duration),
+        "-vn", "-ac", "1", "-ar", str(points * 20), "-f", "s16le", "pipe:1",
+    ]
+    try:
+        result = subprocess.run(command, check=True, capture_output=True, timeout=180)
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
+    except subprocess.CalledProcessError as exc:
+        detail = exc.stderr.decode("utf-8", errors="replace")[-1000:]
+        raise HTTPException(status_code=422, detail=detail or "Audio waveform extraction failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Audio waveform extraction timed out")
+    import array
+    samples = array.array("h")
+    samples.frombytes(result.stdout[:len(result.stdout) - (len(result.stdout) % 2)])
+    if not samples:
+        return {"filename": source.name, "has_audio": True, "duration": analysed_duration, "samples": [0] * points}
+    stride = max(1, len(samples) // points)
+    peaks = []
+    for index in range(points):
+        chunk = samples[index * stride:(index + 1) * stride] if index < points - 1 else samples[index * stride:]
+        peaks.append(round(max((abs(value) for value in chunk), default=0) / 32768, 3))
+    return {
+        "filename": source.name, "has_audio": True,
+        "duration": round(analysed_duration, 3), "truncated": duration > analysed_duration,
+        "samples": peaks,
+    }
+
+
+@app.post("/api/upload/audio")
+async def upload_audio(file: UploadFile = File(...)):
+    suffix = Path(file.filename or "music.mp3").suffix.lower()
+    if suffix not in ALLOWED_AUDIO:
+        raise HTTPException(status_code=415, detail="Unsupported audio format")
+    name = f"{uuid.uuid4().hex}{suffix}"
+    target = MEDIA / name
+    with target.open("wb") as out:
+        shutil.copyfileobj(file.file, out)
+    return {"filename": name, "original_name": file.filename, "url": f"/media/{name}"}
+
+
+@app.post("/api/export/audio-mix")
+def export_audio_mix(payload: dict):
+    source = get_media_file(payload.get("filename", ""))
+    music = get_media_file(payload.get("audio_filename", ""))
+    if music.suffix.lower() not in ALLOWED_AUDIO:
+        raise HTTPException(status_code=415, detail="Background track must be an audio file")
+    try:
+        music_volume = float(payload.get("music_volume", 0.25))
+        original_volume = float(payload.get("original_volume", 1.0))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Audio volume values must be numbers")
+    if not 0 <= music_volume <= 2 or not 0 <= original_volume <= 2:
+        raise HTTPException(status_code=400, detail="Audio volume must be between 0 and 2")
+    info = run_ffprobe(source)
+    streams = info.get("streams", [])
+    if not any(item.get("codec_type") == "video" for item in streams):
+        raise HTTPException(status_code=422, detail="Source file has no video stream")
+    has_audio = any(item.get("codec_type") == "audio" for item in streams)
+    output_name = f"{source.stem}-music-{uuid.uuid4().hex[:8]}.mp4"
+    output = MEDIA / output_name
+    command = ["ffmpeg", "-y", "-i", str(source), "-stream_loop", "-1", "-i", str(music)]
+    if has_audio:
+        filter_graph = (
+            f"[0:a]volume={original_volume}[original];"
+            f"[1:a]volume={music_volume}[music];"
+            "[original][music]amix=inputs=2:duration=first:dropout_transition=2[mixed]"
+        )
+    else:
+        filter_graph = f"[1:a]volume={music_volume}[mixed]"
+    command += ["-filter_complex", filter_graph, "-map", "0:v:0", "-map", "[mixed]",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-shortest", "-movflags", "+faststart", str(output)]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=422, detail=exc.stderr[-1500:] or "Audio mixing failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Audio mixing timed out")
+    return {"filename": output_name, "url": f"/media/{output_name}"}
 
 
 @app.post("/api/video/{filename}/captions")
@@ -177,6 +336,424 @@ def burn_captions(payload: dict):
         raise HTTPException(status_code=504, detail="Subtitle export timed out")
     return {"filename": output_name, "url": f"/media/{output_name}"}
 
+
+
+
+@app.post("/api/export/text")
+def export_text_overlay(payload: dict):
+    """Render a user-supplied text overlay into a new MP4."""
+    source = get_media_file(payload.get("filename", ""))
+    overlay_text = str(payload.get("text", "")).strip()
+    if not overlay_text:
+        raise HTTPException(status_code=400, detail="Overlay text cannot be empty")
+    if len(overlay_text) > 300:
+        raise HTTPException(status_code=400, detail="Overlay text must be 300 characters or fewer")
+    try:
+        font_size = int(payload.get("font_size", 42))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Font size must be a whole number")
+    if not 16 <= font_size <= 96:
+        raise HTTPException(status_code=400, detail="Font size must be between 16 and 96")
+    positions = {
+        "top": "(w-text_w)/2:40",
+        "center": "(w-text_w)/2:(h-text_h)/2",
+        "bottom": "(w-text_w)/2:h-text_h-40",
+        "top-left": "40:40",
+        "top-right": "w-text_w-40:40",
+        "bottom-left": "40:h-text_h-40",
+        "bottom-right": "w-text_w-40:h-text_h-40",
+    }
+    position = str(payload.get("position", "bottom"))
+    if position not in positions:
+        raise HTTPException(status_code=400, detail="Unsupported text position")
+    info = run_ffprobe(source)
+    if not any(item.get("codec_type") == "video" for item in info.get("streams", [])):
+        raise HTTPException(status_code=422, detail="Source file has no video stream")
+    job = uuid.uuid4().hex[:8]
+    text_file = MEDIA / f"overlay-{job}.txt"
+    output_name = f"{source.stem}-text-{job}.mp4"
+    output = MEDIA / output_name
+    text_file.write_text(overlay_text, encoding="utf-8")
+    def escape_filter_path(path: Path) -> str:
+        return str(path.resolve()).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+    font_file = Path("/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf")
+    drawtext = (
+        f"drawtext=fontfile='{escape_filter_path(font_file)}':"
+        f"textfile='{escape_filter_path(text_file)}':fontcolor=white:fontsize={font_size}:expansion=none:"
+        f"x={positions[position].split(':', 1)[0]}:y={positions[position].split(':', 1)[1]}:"
+        "box=1:boxcolor=black@0.55:boxborderw=12"
+    )
+    command = [
+        "ffmpeg", "-y", "-i", str(source), "-vf", drawtext,
+        "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac",
+        "-movflags", "+faststart", str(output),
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=422, detail=exc.stderr[-1500:] or "Text overlay export failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Text overlay export timed out")
+    finally:
+        text_file.unlink(missing_ok=True)
+    return {"filename": output_name, "url": f"/media/{output_name}"}
+
+
+
+
+@app.post("/api/export/fade")
+def export_fade(payload: dict):
+    """Apply fade-in and/or fade-out effects to a video and its audio."""
+    source = get_media_file(payload.get("filename", ""))
+    try:
+        fade_in = float(payload.get("fade_in", 0))
+        fade_out = float(payload.get("fade_out", 0))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Fade durations must be numbers")
+    if not all(map(lambda value: value >= 0, (fade_in, fade_out))):
+        raise HTTPException(status_code=400, detail="Fade durations cannot be negative")
+    info = run_ffprobe(source)
+    streams = info.get("streams", [])
+    video_stream = next((item for item in streams if item.get("codec_type") == "video"), None)
+    if not video_stream:
+        raise HTTPException(status_code=422, detail="Source file has no video stream")
+    duration = float(info.get("format", {}).get("duration") or video_stream.get("duration") or 0)
+    if duration <= 0:
+        raise HTTPException(status_code=422, detail="Video duration is unavailable")
+    if fade_in > duration or fade_out > duration or fade_in + fade_out > duration:
+        raise HTTPException(status_code=400, detail="Combined fade durations cannot exceed video duration")
+    if fade_in == 0 and fade_out == 0:
+        raise HTTPException(status_code=400, detail="Set fade-in or fade-out duration")
+    has_audio = any(item.get("codec_type") == "audio" for item in streams)
+    filters = []
+    video_filters = []
+    if fade_in:
+        video_filters.append(f"fade=t=in:st=0:d={fade_in}")
+    if fade_out:
+        video_filters.append(f"fade=t=out:st={max(0, duration - fade_out)}:d={fade_out}")
+    if video_filters:
+        filters.append(f"[0:v:0]{','.join(video_filters)}[v]")
+    if has_audio:
+        audio_filters = []
+        if fade_in:
+            audio_filters.append(f"afade=t=in:st=0:d={fade_in}")
+        if fade_out:
+            audio_filters.append(f"afade=t=out:st={max(0, duration - fade_out)}:d={fade_out}")
+        filters.append(f"[0:a:0]{','.join(audio_filters)}[a]")
+    output_name = f"{source.stem}-fade-{uuid.uuid4().hex[:8]}.mp4"
+    output = MEDIA / output_name
+    command = ["ffmpeg", "-y", "-i", str(source), "-filter_complex", ";".join(filters)]
+    command += ["-map", "[v]"]
+    if has_audio:
+        command += ["-map", "[a]"]
+    command += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+    if has_audio:
+        command += ["-c:a", "aac", "-b:a", "192k"]
+    command += ["-movflags", "+faststart", str(output)]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=422, detail=exc.stderr[-1500:] or "Fade export failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Fade export timed out")
+    return {"filename": output_name, "url": f"/media/{output_name}"}
+
+
+@app.post("/api/export/timeline")
+def export_timeline(payload: dict):
+    """Normalize clips to a common format, then join them in timeline order."""
+    clips = payload.get("clips")
+    if clips is None:
+        names = payload.get("filenames", [])
+        clips = [{"filename": name, "start": 0, "end": None} for name in names]
+    if not isinstance(clips, list) or not 2 <= len(clips) <= 20:
+        raise HTTPException(status_code=400, detail="Timeline needs between 2 and 20 clips")
+    prepared = []
+    for clip in clips:
+        if not isinstance(clip, dict):
+            raise HTTPException(status_code=400, detail="Each timeline clip must include filename, start and end")
+        source = get_media_file(clip.get("filename", ""))
+        try:
+            start = float(clip.get("start", 0))
+            end = clip.get("end")
+            end = float(end) if end is not None else None
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid clip trim values")
+        info = run_ffprobe(source)
+        total = float(info.get("format", {}).get("duration") or 0)
+        if start < 0 or (end is not None and (end <= start or (total and end > total + 0.05))):
+            raise HTTPException(status_code=400, detail=f"Invalid trim range for {source.name}")
+        if total and start >= total:
+            raise HTTPException(status_code=400, detail=f"Trim start exceeds duration for {source.name}")
+        clip_duration = (end - start) if end is not None else (total - start if total else None)
+        if clip_duration is not None and clip_duration <= 0:
+            raise HTTPException(status_code=400, detail=f"Clip duration is empty for {source.name}")
+        prepared.append((source, start, clip_duration))
+    job = uuid.uuid4().hex[:10]
+    normalized = []
+    concat_list = MEDIA / f"timeline-{job}.txt"
+    output_name = f"jarvis-timeline-{job}.mp4"
+    output = MEDIA / output_name
+    try:
+        for index, (source, trim_start, trim_duration) in enumerate(prepared):
+            info = run_ffprobe(source)
+            streams = info.get("streams", [])
+            if not any(item.get("codec_type") == "video" for item in streams):
+                raise HTTPException(status_code=422, detail=f"{source.name} has no video stream")
+            has_audio = any(item.get("codec_type") == "audio" for item in streams)
+            normalized_file = MEDIA / f"timeline-{job}-{index}.mp4"
+            command = ["ffmpeg", "-y", "-ss", str(trim_start), "-i", str(source)]
+            if trim_duration is not None:
+                command += ["-t", str(trim_duration)]
+            if not has_audio:
+                command += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
+            command += [
+                "-map", "0:v:0", "-map", "0:a:0" if has_audio else "1:a:0",
+                "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                "-c:a", "aac", "-ar", "44100", "-ac", "2", "-shortest",
+                "-movflags", "+faststart", str(normalized_file),
+            ]
+            subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
+            normalized.append(normalized_file)
+        concat_list.write_text(
+            "".join(f"file '{path.name}'\n" for path in normalized), encoding="utf-8"
+        )
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
+             "-c", "copy", "-movflags", "+faststart", str(output)],
+            check=True, capture_output=True, text=True, timeout=1800,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=422, detail=exc.stderr[-1500:] or "Timeline export failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Timeline export timed out")
+    finally:
+        concat_list.unlink(missing_ok=True)
+        for path in normalized:
+            path.unlink(missing_ok=True)
+    return {"filename": output_name, "url": f"/media/{output_name}", "clips": len(prepared)}
+
+
+def _ffmpeg_progress_percent(progress_line, expected_duration):
+    """Convert an FFmpeg -progress out_time line into a safe 0..99 percentage."""
+    if expected_duration <= 0 or "=" not in progress_line:
+        return None
+    key, value = progress_line.strip().split("=", 1)
+    if key == "out_time_ms":
+        try:
+            elapsed = float(value) / 1_000_000
+        except ValueError:
+            return None
+    elif key == "out_time":
+        match = re.fullmatch(r"(\d+):(\d+):(\d+(?:\.\d+)?)", value)
+        if not match:
+            return None
+        hours, minutes, seconds = match.groups()
+        elapsed = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+    else:
+        return None
+    return max(0, min(99, int(elapsed / expected_duration * 100)))
+
+
+def _run_export_process(command, job_id=None, timeout=1800, expected_duration=None):
+    """Run an FFmpeg step with cancellation and optional real render progress."""
+    if not job_id:
+        return subprocess.run(command, check=True, capture_output=True, text=True, timeout=timeout)
+    import queue
+    import threading
+    import time
+
+    progress_command = list(command)
+    if expected_duration and "-progress" not in progress_command:
+        progress_command[-1:-1] = ["-progress", "pipe:1", "-nostats"]
+    process = subprocess.Popen(progress_command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, bufsize=1)
+    _export_processes[job_id] = process
+    stdout_queue = queue.Queue()
+    stderr_parts = []
+
+    def read_stdout():
+        try:
+            for line in process.stdout:
+                stdout_queue.put(line)
+        finally:
+            stdout_queue.put(None)
+
+    def read_stderr():
+        for line in process.stderr:
+            stderr_parts.append(line)
+
+    stdout_thread = threading.Thread(target=read_stdout, daemon=True)
+    stderr_thread = threading.Thread(target=read_stderr, daemon=True)
+    stdout_thread.start()
+    stderr_thread.start()
+    stdout_parts = []
+    deadline = time.monotonic() + timeout
+    last_progress = None
+    stdout_done = False
+    try:
+        while process.poll() is None or not stdout_done:
+            if _export_jobs.get(job_id, {}).get("cancel_requested"):
+                process.terminate()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                raise InterruptedError("Export cancelled by user")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                process.kill()
+                process.wait()
+                raise subprocess.TimeoutExpired(progress_command, timeout,
+                                                output="".join(stdout_parts), stderr="".join(stderr_parts))
+            try:
+                line = stdout_queue.get(timeout=min(0.2, remaining))
+                if line is None:
+                    stdout_done = True
+                else:
+                    stdout_parts.append(line)
+                    if expected_duration:
+                        percent = _ffmpeg_progress_percent(line, expected_duration)
+                        if percent is not None and percent != last_progress:
+                            last_progress = percent
+                            job = _export_jobs.get(job_id, {})
+                            if job and job.get("status") == "running":
+                                _update_export_job(job_id, {
+                                    "progress": max(5, percent),
+                                    "message": f"Rendering video · {max(5, percent)}%",
+                                })
+            except queue.Empty:
+                continue
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        stdout = "".join(stdout_parts)
+        stderr = "".join(stderr_parts)
+        if process.returncode:
+            raise subprocess.CalledProcessError(process.returncode, progress_command,
+                                                output=stdout, stderr=stderr)
+        return subprocess.CompletedProcess(progress_command, process.returncode, stdout, stderr)
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait()
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        _export_processes.pop(job_id, None)
+
+
+@app.post("/api/export/timeline-transition")
+def export_timeline_transition(payload: dict, job_id: str | None = None):
+    """Join timeline clips with a video transition and matching audio crossfades."""
+    clips = payload.get("clips")
+    if not isinstance(clips, list) or not 2 <= len(clips) <= 20:
+        raise HTTPException(status_code=400, detail="Transition export needs between 2 and 20 clips")
+    transition = str(payload.get("transition", "fade"))
+    allowed_transitions = {"fade", "dissolve", "wipeleft", "wiperight", "slideleft", "slideright", "circleopen"}
+    if transition not in allowed_transitions:
+        raise HTTPException(status_code=400, detail="Unsupported transition type")
+    try:
+        transition_duration = float(payload.get("transition_duration", 0.75))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Transition duration must be a number")
+    if not math.isfinite(transition_duration) or not 0.1 <= transition_duration <= 3:
+        raise HTTPException(status_code=400, detail="Transition duration must be between 0.1 and 3 seconds")
+
+    prepared = []
+    for clip in clips:
+        if not isinstance(clip, dict):
+            raise HTTPException(status_code=400, detail="Each clip must include filename, start and end")
+        source = get_media_file(clip.get("filename", ""))
+        try:
+            start = float(clip.get("start", 0))
+            end = float(clip.get("end"))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid clip trim values")
+        if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
+            raise HTTPException(status_code=400, detail="Invalid clip trim range")
+        info = run_ffprobe(source)
+        streams = info.get("streams", [])
+        video_stream = next((item for item in streams if item.get("codec_type") == "video"), None)
+        total = float(info.get("format", {}).get("duration") or (video_stream or {}).get("duration") or 0)
+        if not video_stream:
+            raise HTTPException(status_code=422, detail=f"{source.name} has no video stream")
+        if total <= 0 or end > total + 0.05:
+            raise HTTPException(status_code=400, detail=f"Trim range exceeds video duration for {source.name}")
+        clip_duration = end - start
+        if clip_duration <= transition_duration:
+            raise HTTPException(status_code=400, detail="Each selected clip must be longer than the transition")
+        prepared.append((source, start, clip_duration, any(item.get("codec_type") == "audio" for item in streams)))
+
+    job = uuid.uuid4().hex[:10]
+    normalized = []
+    output_name = f"jarvis-transition-{job}.mp4"
+    output = MEDIA / output_name
+    try:
+        for index, (source, trim_start, trim_duration, has_audio) in enumerate(prepared):
+            normalized_file = MEDIA / f"transition-{job}-{index}.mp4"
+            command = ["ffmpeg", "-y", "-ss", str(trim_start), "-i", str(source), "-t", str(trim_duration)]
+            if not has_audio:
+                command += ["-f", "lavfi", "-t", str(trim_duration), "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
+            command += [
+                "-map", "0:v:0", "-map", "0:a:0" if has_audio else "1:a:0",
+                "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                "-c:a", "aac", "-ar", "44100", "-ac", "2", "-t", str(trim_duration),
+                "-movflags", "+faststart", str(normalized_file),
+            ]
+            _run_export_process(command, job_id=job_id, timeout=1800)
+            normalized.append(normalized_file)
+
+        graph = []
+        video_label = "[0:v]"
+        audio_label = "[0:a]"
+        elapsed = prepared[0][2]
+        for index in range(1, len(prepared)):
+            next_video = f"[v{index}]"
+            next_audio = f"[a{index}]"
+            offset = elapsed - transition_duration
+            graph.append(
+                f"{video_label}[{index}:v]xfade=transition={transition}:duration={transition_duration}:offset={offset}{next_video}"
+            )
+            graph.append(
+                f"{audio_label}[{index}:a]acrossfade=d={transition_duration}:c1=tri:c2=tri{next_audio}"
+            )
+            video_label, audio_label = next_video, next_audio
+            elapsed += prepared[index][2] - transition_duration
+
+        command = ["ffmpeg", "-y"]
+        for path in normalized:
+            command += ["-i", str(path)]
+        command += [
+            "-filter_complex", ";".join(graph),
+            "-map", video_label, "-map", audio_label,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
+        ]
+        _run_export_process(command, job_id=job_id, timeout=3600, expected_duration=elapsed)
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=422, detail=exc.stderr[-1500:] or "Transition export failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Transition export timed out")
+    finally:
+        for path in normalized:
+            path.unlink(missing_ok=True)
+    return {
+        "filename": output_name, "url": f"/media/{output_name}",
+        "clips": len(prepared), "transition": transition,
+        "transition_duration": transition_duration,
+    }
+
+
 @app.post("/api/export/trim")
 def trim_video(payload: dict):
     source = get_media_file(payload.get("filename", ""))
@@ -207,3 +784,161 @@ def trim_video(payload: dict):
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Export timed out")
     return {"filename": output_name, "url": f"/media/{output_name}"}
+
+
+def project_path(project_id: str) -> Path:
+    if not re.fullmatch(r"[a-f0-9]{32}", str(project_id)):
+        raise HTTPException(status_code=400, detail="Invalid project ID")
+    return PROJECTS / f"{project_id}.json"
+
+
+@app.get("/api/projects")
+def list_projects():
+    projects = []
+    for path in PROJECTS.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            projects.append({
+                "id": path.stem,
+                "name": data.get("name", "Untitled project"),
+                "updated_at": data.get("updated_at"),
+            })
+        except (OSError, ValueError):
+            continue
+    projects.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
+    return {"projects": projects}
+
+
+@app.post("/api/projects")
+def save_project(payload: dict):
+    name = str(payload.get("name", "Untitled project")).strip()
+    if not name or len(name) > 80:
+        raise HTTPException(status_code=400, detail="Project name must be 1–80 characters")
+    state = payload.get("state")
+    if not isinstance(state, dict):
+        raise HTTPException(status_code=400, detail="Project state must be an object")
+    clips = state.get("timeline_files", [])
+    if not isinstance(clips, list) or len(clips) > 20:
+        raise HTTPException(status_code=400, detail="Project can contain up to 20 timeline clips")
+    safe_clips = []
+    for clip in clips:
+        if not isinstance(clip, dict):
+            raise HTTPException(status_code=400, detail="Invalid timeline clip")
+        source = get_media_file(clip.get("filename", ""))
+        try:
+            duration = float(clip.get("duration", 0))
+            trim_start = float(clip.get("trimStart", 0))
+            trim_end = float(clip.get("trimEnd", duration))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid saved clip timing")
+        if duration <= 0 or trim_start < 0 or trim_end <= trim_start or trim_end > duration + 0.05:
+            raise HTTPException(status_code=400, detail="Saved clip trim range is invalid")
+        safe_clips.append({
+            "filename": source.name,
+            "url": f"/media/{source.name}",
+            "original_name": str(clip.get("original_name", source.name))[:255],
+            "duration": duration, "trimStart": trim_start, "trimEnd": trim_end,
+        })
+    project_id = str(payload.get("id") or uuid.uuid4().hex)
+    target = project_path(project_id)
+    from datetime import datetime, timezone
+    existing = {}
+    if target.is_file():
+        try:
+            existing = json.loads(target.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            existing = {}
+    document = {
+        "id": project_id, "name": name, "state": {**state, "timeline_files": safe_clips},
+        "created_at": existing.get("created_at") or datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    target.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"id": project_id, "name": name, "updated_at": document["updated_at"]}
+
+
+@app.get("/api/projects/{project_id}")
+def load_project(project_id: str):
+    target = project_path(project_id)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Project not found")
+    try:
+        document = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise HTTPException(status_code=500, detail="Saved project is unreadable")
+    return document
+
+
+@app.delete("/api/projects/{project_id}")
+def delete_project(project_id: str):
+    target = project_path(project_id)
+    if not target.is_file():
+        raise HTTPException(status_code=404, detail="Project not found")
+    target.unlink()
+    return {"deleted": True, "id": project_id}
+
+
+def _run_export_job(job_id: str, payload: dict):
+    _update_export_job(job_id, {"status": "running", "progress": 5, "message": "Preparing video clips"})
+    try:
+        if _export_jobs[job_id].get("cancel_requested"):
+            _update_export_job(job_id, {"status": "cancelled", "progress": 0, "message": "Export cancelled"})
+            return
+        result = export_timeline_transition(payload, job_id=job_id)
+        if _export_jobs[job_id].get("cancel_requested"):
+            _update_export_job(job_id, {"status": "cancelled", "progress": 0, "message": "Export cancelled"})
+        else:
+            _update_export_job(job_id, {
+                "status": "completed", "progress": 100,
+                "message": "Export complete", "result": result,
+            })
+    except InterruptedError:
+        _update_export_job(job_id, {"status": "cancelled", "progress": 0, "message": "Export cancelled"})
+    except HTTPException as exc:
+        _update_export_job(job_id, {"status": "failed", "progress": 0, "message": str(exc.detail)})
+    except Exception:
+        _update_export_job(job_id, {"status": "failed", "progress": 0, "message": "Unexpected export error"})
+
+
+@app.post("/api/export/jobs/timeline-transition", status_code=202)
+def start_transition_export_job(payload: dict, background_tasks: BackgroundTasks):
+    job_id = uuid.uuid4().hex
+    _export_jobs[job_id] = {
+        "id": job_id, "status": "queued", "progress": 0,
+        "message": "Export queued", "result": None,
+        "created_at": _utc_now(), "finished_at": None,
+        "cancel_requested": False,
+    }
+    _persist_export_jobs()
+    background_tasks.add_task(_run_export_job, job_id, payload)
+    return {"job_id": job_id, "status": "queued", "status_url": f"/api/export/jobs/{job_id}"}
+
+
+@app.post("/api/export/jobs/{job_id}/cancel")
+def cancel_export_job(job_id: str):
+    if not re.fullmatch(r"[a-f0-9]{32}", job_id):
+        raise HTTPException(status_code=400, detail="Invalid export job ID")
+    job = _export_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Export job not found")
+    if job["status"] in {"completed", "failed", "cancelled"}:
+        raise HTTPException(status_code=409, detail="Cannot cancel a finished export")
+    _update_export_job(job_id, {"cancel_requested": True, "message": "Cancellation requested"})
+    return {"id": job_id, "status": job["status"], "cancel_requested": True}
+
+
+@app.get("/api/export/jobs")
+def list_export_jobs(limit: int = 50):
+    limit = min(100, max(1, limit))
+    jobs = sorted(_export_jobs.values(), key=lambda item: item.get("created_at", ""), reverse=True)
+    return {"jobs": jobs[:limit], "total": len(jobs)}
+
+
+@app.get("/api/export/jobs/{job_id}")
+def get_export_job(job_id: str):
+    if not re.fullmatch(r"[a-f0-9]{32}", job_id):
+        raise HTTPException(status_code=400, detail="Invalid export job ID")
+    job = _export_jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Export job not found")
+    return job

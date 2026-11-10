@@ -1,0 +1,88 @@
+name: JARVIS Android APK
+run-name: Build JARVIS Android APK (${{ github.ref_name }})
+
+on:
+  push:
+    branches:
+      - feature/voice-commands-captions
+    paths:
+      - "frontend/**"
+      - ".github/workflows/android-apk.yml"
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: "Public HTTPS URL of the running FastAPI backend (optional if repository variable VITE_API_URL is set)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-debug-apk:
+    name: Build Android debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve backend URL
+        id: backend
+        env:
+          INPUT_API_URL: ${{ inputs.api_url }}
+          REPOSITORY_API_URL: ${{ vars.VITE_API_URL }}
+        run: |
+          VITE_API_URL="${INPUT_API_URL:-$REPOSITORY_API_URL}"
+          if [ -z "$VITE_API_URL" ]; then
+            VITE_API_URL="https://your-api.example.com"
+            echo "::warning::No backend URL supplied. APK will build with a placeholder and backend features will not connect until a real HTTPS URL is configured."
+          fi
+          case "$VITE_API_URL" in
+            https://*) ;;
+            *) echo "::error::Backend URL must start with https://"; exit 1 ;;
+          esac
+          echo "api_url=$VITE_API_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: Build web app for Android
+        working-directory: frontend
+        env:
+          VITE_API_URL: ${{ steps.backend.outputs.api_url }}
+        run: npm run build:mobile
+
+      - name: Generate Android project
+        working-directory: frontend
+        run: npx cap add android
+
+      - name: Sync Capacitor
+        working-directory: frontend
+        run: npm run cap:sync
+
+      - name: Build debug APK
+        working-directory: frontend/android
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: jarvis-video-studio-debug-apk
+          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14

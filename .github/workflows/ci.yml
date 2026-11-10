@@ -1,0 +1,37 @@
+name: JARVIS CI
+
+on:
+  push:
+    branches:
+      - main
+      - feature/voice-commands-captions
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  frontend-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm run build
+
+  backend-syntax:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r backend/requirements.txt pytest httpx
+      - run: python -m compileall -q backend/app
+      - run: pytest -q backend/tests
