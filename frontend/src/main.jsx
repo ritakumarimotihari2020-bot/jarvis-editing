@@ -16,6 +16,7 @@ function App() {
   const [commandText, setCommandText] = useState('');
   const [caption, setCaption] = useState(null);
   const [captionLanguage, setCaptionLanguage] = useState('auto');
+  const [captionPreview, setCaptionPreview] = useState('');
 
   async function upload() {
     if (!file) return;
@@ -100,7 +101,27 @@ function App() {
       const body = await res.json();
       if (!res.ok) throw new Error(body.detail || 'Caption generation failed');
       setCaption(body);
+      const srtRes = await fetch(`${API}${body.url}`);
+      setCaptionPreview(srtRes.ok ? await srtRes.text() : 'Preview unavailable.');
       setMessage(`Captions ready: ${body.segments} subtitle segments detected.`);
+    } catch (err) { setMessage(err.message); }
+    finally { setBusy(false); }
+  }
+
+
+  async function burnCaptions() {
+    if (!video || !caption) return;
+    setBusy(true); setMessage('Burning subtitles into your video…');
+    try {
+      const res = await fetch(`${API}/api/export/captions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename: video.filename, subtitle_filename: caption.filename })
+      });
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || 'Subtitle export failed');
+      setVideo({ ...body, original_name: 'Captioned export' });
+      setInfo(null); setCaption(null); setCaptionPreview('');
+      setMessage('Captioned video exported. Use the player menu to save it.');
     } catch (err) { setMessage(err.message); }
     finally { setBusy(false); }
   }
@@ -122,11 +143,11 @@ function App() {
         <label>DURATION <div className="input-wrap"><input type="number" min="0.1" max={maxDuration} step="0.1" value={duration} onChange={e => setDuration(e.target.value)} /><span>seconds</span></div></label>
         <button className="primary" disabled={!video || busy} onClick={exportTrim}>{busy ? 'WORKING…' : '✦  EXPORT VIDEO'}</button>
         <div className="voice-box"><h3>03 / JARVIS VOICE COMMAND</h3><p className="hint">Try “start time 5”, “duration 20”, “export video” or “अपलोड”</p><button className="quiet" disabled={busy || listening} onClick={startListening}>{listening ? 'LISTENING…' : '🎙️  SPEAK COMMAND'}</button>{commandText && <small>Heard: {commandText}</small>}</div>
-        <div className="voice-box"><h3>04 / AI AUTO CAPTIONS</h3><p className="hint">Whisper creates a downloadable SRT subtitle file.</p><select value={captionLanguage} onChange={e => setCaptionLanguage(e.target.value)}><option value="auto">Detect language</option><option value="hi">Hindi</option><option value="en">English</option></select><button className="quiet" disabled={!video || busy} onClick={generateCaptions}>{busy ? 'PROCESSING…' : 'GENERATE CAPTIONS'}</button>{caption && <a className="caption-link" href={`${API}${caption.url}`} download>Download subtitles (.srt) · {caption.segments} lines</a>}</div>
+        <div className="voice-box"><h3>04 / AI AUTO CAPTIONS</h3><p className="hint">Whisper creates a downloadable SRT subtitle file.</p><select value={captionLanguage} onChange={e => setCaptionLanguage(e.target.value)}><option value="auto">Detect language</option><option value="hi">Hindi</option><option value="en">English</option></select><button className="quiet" disabled={!video || busy} onClick={generateCaptions}>{busy ? 'PROCESSING…' : 'GENERATE CAPTIONS'}</button>{caption && <><a className="caption-link" href={`${API}${caption.url}`} download>Download subtitles (.srt) · {caption.segments} lines</a><pre className="caption-preview">{captionPreview.slice(0, 1800)}</pre><button className="primary" disabled={busy} onClick={burnCaptions}>BURN CAPTIONS INTO VIDEO</button></>}</div>
         <p className="notice" role="status">{message}</p>
       </div>
     </section>
-    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.3.0</span></footer>
+    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.4.0</span></footer>
   </main>;
 }
 
