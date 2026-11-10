@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import math
 import shutil
 import subprocess
 import uuid
@@ -12,7 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MEDIA = ROOT / "media"
 MEDIA.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="JARVIS AI Video Studio API", version="0.12.0")
+app = FastAPI(title="JARVIS AI Video Studio API", version="0.13.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -59,7 +60,7 @@ def srt_time(seconds: float) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.12.0"}
+    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.13.0"}
 
 
 @app.post("/api/upload")
@@ -481,6 +482,111 @@ def export_timeline(payload: dict):
         for path in normalized:
             path.unlink(missing_ok=True)
     return {"filename": output_name, "url": f"/media/{output_name}", "clips": len(prepared)}
+
+
+@app.post("/api/export/timeline-transition")
+def export_timeline_transition(payload: dict):
+    """Join timeline clips with a video transition and matching audio crossfades."""
+    clips = payload.get("clips")
+    if not isinstance(clips, list) or not 2 <= len(clips) <= 20:
+        raise HTTPException(status_code=400, detail="Transition export needs between 2 and 20 clips")
+    transition = str(payload.get("transition", "fade"))
+    allowed_transitions = {"fade", "dissolve", "wipeleft", "wiperight", "slideleft", "slideright", "circleopen"}
+    if transition not in allowed_transitions:
+        raise HTTPException(status_code=400, detail="Unsupported transition type")
+    try:
+        transition_duration = float(payload.get("transition_duration", 0.75))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Transition duration must be a number")
+    if not math.isfinite(transition_duration) or not 0.1 <= transition_duration <= 3:
+        raise HTTPException(status_code=400, detail="Transition duration must be between 0.1 and 3 seconds")
+
+    prepared = []
+    for clip in clips:
+        if not isinstance(clip, dict):
+            raise HTTPException(status_code=400, detail="Each clip must include filename, start and end")
+        source = get_media_file(clip.get("filename", ""))
+        try:
+            start = float(clip.get("start", 0))
+            end = float(clip.get("end"))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid clip trim values")
+        if not math.isfinite(start) or not math.isfinite(end) or start < 0 or end <= start:
+            raise HTTPException(status_code=400, detail="Invalid clip trim range")
+        info = run_ffprobe(source)
+        streams = info.get("streams", [])
+        video_stream = next((item for item in streams if item.get("codec_type") == "video"), None)
+        total = float(info.get("format", {}).get("duration") or (video_stream or {}).get("duration") or 0)
+        if not video_stream:
+            raise HTTPException(status_code=422, detail=f"{source.name} has no video stream")
+        if total <= 0 or end > total + 0.05:
+            raise HTTPException(status_code=400, detail=f"Trim range exceeds video duration for {source.name}")
+        clip_duration = end - start
+        if clip_duration <= transition_duration:
+            raise HTTPException(status_code=400, detail="Each selected clip must be longer than the transition")
+        prepared.append((source, start, clip_duration, any(item.get("codec_type") == "audio" for item in streams)))
+
+    job = uuid.uuid4().hex[:10]
+    normalized = []
+    output_name = f"jarvis-transition-{job}.mp4"
+    output = MEDIA / output_name
+    try:
+        for index, (source, trim_start, trim_duration, has_audio) in enumerate(prepared):
+            normalized_file = MEDIA / f"transition-{job}-{index}.mp4"
+            command = ["ffmpeg", "-y", "-ss", str(trim_start), "-i", str(source), "-t", str(trim_duration)]
+            if not has_audio:
+                command += ["-f", "lavfi", "-t", str(trim_duration), "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
+            command += [
+                "-map", "0:v:0", "-map", "0:a:0" if has_audio else "1:a:0",
+                "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p",
+                "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+                "-c:a", "aac", "-ar", "44100", "-ac", "2", "-t", str(trim_duration),
+                "-movflags", "+faststart", str(normalized_file),
+            ]
+            subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
+            normalized.append(normalized_file)
+
+        graph = []
+        video_label = "[0:v]"
+        audio_label = "[0:a]"
+        elapsed = prepared[0][2]
+        for index in range(1, len(prepared)):
+            next_video = f"[v{index}]"
+            next_audio = f"[a{index}]"
+            offset = elapsed - transition_duration
+            graph.append(
+                f"{video_label}[{index}:v]xfade=transition={transition}:duration={transition_duration}:offset={offset}{next_video}"
+            )
+            graph.append(
+                f"{audio_label}[{index}:a]acrossfade=d={transition_duration}:c1=tri:c2=tri{next_audio}"
+            )
+            video_label, audio_label = next_video, next_audio
+            elapsed += prepared[index][2] - transition_duration
+
+        command = ["ffmpeg", "-y"]
+        for path in normalized:
+            command += ["-i", str(path)]
+        command += [
+            "-filter_complex", ";".join(graph),
+            "-map", video_label, "-map", audio_label,
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(output),
+        ]
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=3600)
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=422, detail=exc.stderr[-1500:] or "Transition export failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Transition export timed out")
+    finally:
+        for path in normalized:
+            path.unlink(missing_ok=True)
+    return {
+        "filename": output_name, "url": f"/media/{output_name}",
+        "clips": len(prepared), "transition": transition,
+        "transition_duration": transition_duration,
+    }
 
 
 @app.post("/api/export/trim")
