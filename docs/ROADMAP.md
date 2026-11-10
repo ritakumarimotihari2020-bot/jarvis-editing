@@ -1,5 +1,11 @@
 # JARVIS AI Video Studio — roadmap
 
+## Implemented in 0.11.0
+- Added text overlays with seven screen positions and adjustable font size
+- Render text into MP4 using FFmpeg drawtext and a UTF-8 text file
+- Added input validation tests and installed DejaVu fonts in the Docker image
+
+
 ## Implemented in 0.10.0
 - Added background music upload for MP3, WAV, AAC, M4A, OGG and FLAC
 - Added FFmpeg music mixing with independent original/music volume controls and loop-to-video duration
