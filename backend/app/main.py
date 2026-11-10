@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MEDIA = ROOT / "media"
 MEDIA.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="JARVIS AI Video Studio API", version="0.4.1")
+app = FastAPI(title="JARVIS AI Video Studio API", version="0.6.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -58,7 +58,7 @@ def srt_time(seconds: float) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.4.1"}
+    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.6.0"}
 
 
 @app.post("/api/upload")
@@ -181,24 +181,49 @@ def burn_captions(payload: dict):
 @app.post("/api/export/timeline")
 def export_timeline(payload: dict):
     """Normalize clips to a common format, then join them in timeline order."""
-    names = payload.get("filenames")
-    if not isinstance(names, list) or not 2 <= len(names) <= 20:
+    clips = payload.get("clips")
+    if clips is None:
+        names = payload.get("filenames", [])
+        clips = [{"filename": name, "start": 0, "end": None} for name in names]
+    if not isinstance(clips, list) or not 2 <= len(clips) <= 20:
         raise HTTPException(status_code=400, detail="Timeline needs between 2 and 20 clips")
-    sources = [get_media_file(name) for name in names]
+    prepared = []
+    for clip in clips:
+        if not isinstance(clip, dict):
+            raise HTTPException(status_code=400, detail="Each timeline clip must include filename, start and end")
+        source = get_media_file(clip.get("filename", ""))
+        try:
+            start = float(clip.get("start", 0))
+            end = clip.get("end")
+            end = float(end) if end is not None else None
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid clip trim values")
+        info = run_ffprobe(source)
+        total = float(info.get("format", {}).get("duration") or 0)
+        if start < 0 or (end is not None and (end <= start or (total and end > total + 0.05))):
+            raise HTTPException(status_code=400, detail=f"Invalid trim range for {source.name}")
+        if total and start >= total:
+            raise HTTPException(status_code=400, detail=f"Trim start exceeds duration for {source.name}")
+        clip_duration = (end - start) if end is not None else (total - start if total else None)
+        if clip_duration is not None and clip_duration <= 0:
+            raise HTTPException(status_code=400, detail=f"Clip duration is empty for {source.name}")
+        prepared.append((source, start, clip_duration))
     job = uuid.uuid4().hex[:10]
     normalized = []
     concat_list = MEDIA / f"timeline-{job}.txt"
     output_name = f"jarvis-timeline-{job}.mp4"
     output = MEDIA / output_name
     try:
-        for index, source in enumerate(sources):
+        for index, (source, trim_start, trim_duration) in enumerate(prepared):
             info = run_ffprobe(source)
             streams = info.get("streams", [])
             if not any(item.get("codec_type") == "video" for item in streams):
                 raise HTTPException(status_code=422, detail=f"{source.name} has no video stream")
             has_audio = any(item.get("codec_type") == "audio" for item in streams)
             normalized_file = MEDIA / f"timeline-{job}-{index}.mp4"
-            command = ["ffmpeg", "-y", "-i", str(source)]
+            command = ["ffmpeg", "-y", "-ss", str(trim_start), "-i", str(source)]
+            if trim_duration is not None:
+                command += ["-t", str(trim_duration)]
             if not has_audio:
                 command += ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"]
             command += [
@@ -228,7 +253,7 @@ def export_timeline(payload: dict):
         concat_list.unlink(missing_ok=True)
         for path in normalized:
             path.unlink(missing_ok=True)
-    return {"filename": output_name, "url": f"/media/{output_name}", "clips": len(sources)}
+    return {"filename": output_name, "url": f"/media/{output_name}", "clips": len(prepared)}
 
 
 @app.post("/api/export/trim")
