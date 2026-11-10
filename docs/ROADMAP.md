@@ -1,5 +1,12 @@
 # JARVIS AI Video Studio — roadmap
 
+## Implemented in 0.16.0
+- Added a cancel endpoint for queued/running transition export jobs
+- FFmpeg normalization and final render subprocesses can now be terminated when cancellation is requested
+- Added an editor cancel control and cancellation state feedback
+- Added regression coverage for cancellation, completed-job conflict and unknown jobs
+- Job records remain in process memory; progress remains phase-based rather than frame-accurate
+
 ## Implemented in 0.15.0
 - Added background transition-export job submission with HTTP 202 responses
 - Added export job status endpoint with queued, running, completed and failed states
@@ -85,11 +92,10 @@ Install the base backend requirements, then install `backend/requirements-ai.txt
 The first caption request downloads Whisper's `base` model, so the server needs internet access and enough RAM/disk. CPU transcription can be slow. Voice commands use browser Web Speech API and require a supported browser (Chrome on Android is recommended) and microphone permission.
 
 ## Next milestones
-1. Add waveform/audio preview.
-2. Add project persistence and background export jobs.
-3. Add project persistence and background export jobs.
-4. Add automated backend/frontend tests and deployment configuration.
-5. Package the mobile-friendly client as an Android app (Capacitor) after the web workflow is stable.
+1. Add durable export history and restart recovery.
+2. Add frame-accurate FFmpeg progress reporting.
+3. Add automated frontend tests and deployment configuration.
+4. Package the mobile-friendly client as an Android app (Capacitor) after the web workflow is stable.
 
 ## Current limitations
 This is an early editor scaffold, not a full AI editor. The multi-clip timeline supports ordering, per-clip numeric IN/OUT trims, and joining; draggable visual handles are available for both the main single-video trim editor and each multi-clip timeline row; waveform preview is implemented for the main selected video; multi-clip per-row waveforms and audio mixing is implemented for the main selected video; multi-clip soundtrack mixing is not implemented yet. Voice recognition depends on browser support. Whisper captions are optional and are not ready until the AI requirements and model are installed on the server. Subtitle burn-in requires FFmpeg with the subtitles/libass filter available. APK packaging, authentication, and cloud deployment are not implemented yet. Fade and transition effects re-encode video and audio, so export time depends on source length and server CPU. Saved projects store references to uploaded media files; deleting those media files makes their project clips unavailable. Project storage currently has no user authentication or cloud synchronization. Saved projects store references to uploaded media files; deleting those media files makes their project clips unavailable. Project storage currently has no user authentication or cloud synchronization. The API needs FFmpeg and FFprobe on the server. Automated backend API tests are configured in GitHub Actions; frontend build and real video playback/export still need verification.
