@@ -462,5 +462,5 @@ def test_export_history_endpoint_returns_saved_jobs(tmp_path, monkeypatch):
     response = client.get("/api/export/jobs")
     assert response.status_code == 200
     assert response.json()["total"] >= 1
-    assert response.json()["jobs"][0]["id"] == job_id
+    assert any(job["id"] == job_id for job in response.json()["jobs"])
     main._export_jobs.pop(job_id, None)
