@@ -15,7 +15,7 @@ def test_health_reports_current_api_version():
     assert response.json() == {
         "status": "ok",
         "service": "JARVIS AI Video Studio",
-        "version": "0.16.0",
+        "version": "0.17.0",
     }
 
 
@@ -360,7 +360,8 @@ def test_project_name_must_not_be_empty(tmp_path, monkeypatch):
     assert response.status_code == 400
 
 
-def test_transition_export_job_completes_and_returns_result(monkeypatch):
+def test_transition_export_job_completes_and_returns_result(monkeypatch, tmp_path):
+    monkeypatch.setattr(main, "PROJECTS", tmp_path)
     monkeypatch.setattr(main, "export_timeline_transition", lambda payload, job_id=None: {
         "filename": "finished.mp4", "url": "/media/finished.mp4",
         "clips": len(payload["clips"]), "transition": payload["transition"],
@@ -416,3 +417,50 @@ def test_completed_export_job_cannot_be_cancelled():
 def test_cancel_export_job_rejects_unknown_id():
     response = client.post("/api/export/jobs/" + "d" * 32 + "/cancel")
     assert response.status_code == 404
+
+
+def test_export_history_survives_reload(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "PROJECTS", tmp_path)
+    job_id = "e" * 32
+    main._export_jobs[job_id] = {
+        "id": job_id, "status": "completed", "progress": 100,
+        "message": "Export complete", "result": {"filename": "saved.mp4"},
+        "created_at": "2026-11-10T10:00:00+00:00", "finished_at": None,
+    }
+    main._persist_export_jobs()
+    main._export_jobs.pop(job_id)
+    main._load_export_jobs()
+    assert main._export_jobs[job_id]["result"]["filename"] == "saved.mp4"
+    main._export_jobs.pop(job_id, None)
+
+
+def test_running_export_is_marked_interrupted_after_reload(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "PROJECTS", tmp_path)
+    job_id = "f" * 32
+    main._export_jobs[job_id] = {
+        "id": job_id, "status": "running", "progress": 5,
+        "message": "Preparing video clips", "result": None,
+        "created_at": "2026-11-10T10:00:00+00:00", "finished_at": None,
+    }
+    main._persist_export_jobs()
+    main._export_jobs.pop(job_id)
+    main._load_export_jobs()
+    assert main._export_jobs[job_id]["status"] == "interrupted"
+    assert "restarted" in main._export_jobs[job_id]["message"]
+    main._export_jobs.pop(job_id, None)
+
+
+def test_export_history_endpoint_returns_saved_jobs(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "PROJECTS", tmp_path)
+    job_id = "9" * 32
+    main._export_jobs[job_id] = {
+        "id": job_id, "status": "completed", "progress": 100,
+        "message": "Export complete", "result": {"filename": "history.mp4"},
+        "created_at": "2026-11-10T10:00:00+00:00",
+    }
+    main._persist_export_jobs()
+    response = client.get("/api/export/jobs")
+    assert response.status_code == 200
+    assert response.json()["total"] >= 1
+    assert response.json()["jobs"][0]["id"] == job_id
+    main._export_jobs.pop(job_id, None)
