@@ -18,10 +18,23 @@ function App() {
   const [caption, setCaption] = useState(null);
   const [captionLanguage, setCaptionLanguage] = useState('auto');
   const [captionPreview, setCaptionPreview] = useState('');
+  const [waveform, setWaveform] = useState(null);
   const [timelineFiles, setTimelineFiles] = useState([]);
   const [timelinePreviewing, setTimelinePreviewing] = useState(false);
   const [timelinePreviewIndex, setTimelinePreviewIndex] = useState(0);
 
+
+  async function loadWaveform(filename) {
+    setWaveform(null);
+    try {
+      const res = await fetch(`${API}/api/video/${encodeURIComponent(filename)}/waveform?points=240`);
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || 'Waveform unavailable');
+      setWaveform(body);
+    } catch (err) {
+      setWaveform({ has_audio: false, samples: [], error: err.message });
+    }
+  }
 
   async function addTimelineFiles(files) {
     const selected = Array.from(files || []).filter(item => item.type.startsWith('video/'));
@@ -133,6 +146,7 @@ function App() {
       const meta = await metaRes.json();
       if (!metaRes.ok) throw new Error(meta.detail || 'Video analysis failed');
       setInfo(meta);
+      await loadWaveform(body.filename);
       setDuration(String(Math.max(0.1, Math.floor(meta.duration * 10) / 10)));
       setCaption(null);
       setMessage('Video analysed. Try a voice command or generate captions.');
@@ -264,6 +278,7 @@ function App() {
         {video ? <video key={timelinePreviewing ? "timeline-" + timelinePreviewIndex : "single-preview"} ref={playerRef} controls playsInline onLoadedMetadata={handleTimelinePreviewLoaded} onTimeUpdate={handleTimelinePreviewTime} onEnded={() => { if (timelinePreviewing) advanceTimelinePreview(); }} src={timelinePreviewing && timelineFiles[timelinePreviewIndex] ? API + timelineFiles[timelinePreviewIndex].url : `${API}${video.url}`} /> : <label className="drop"><input type="file" accept="video/*" onChange={e => setFile(e.target.files?.[0] || null)} /><span className="upload-icon">＋</span><strong>{file ? file.name : 'Choose your video'}</strong><small>MP4, MOV, MKV, WEBM or AVI</small></label>}
         {!video && <button className="primary" disabled={!file || busy} onClick={upload}>{busy ? 'UPLOADING…' : 'UPLOAD & ANALYSE'}</button>}
         {video && <button className="quiet" onClick={() => { setVideo(null); setInfo(null); setFile(null); setCaption(null); setMessage('Choose a video to begin editing.'); }}>Choose another video</button>}
+        {waveform && <div className="audio-waveform" aria-label="Audio waveform preview"><div className="waveform-heading"><strong>♫ AUDIO WAVEFORM</strong><span>{waveform.has_audio ? `${waveform.duration}s analysed` : 'NO AUDIO TRACK'}</span></div>{waveform.has_audio ? <div className="waveform-bars">{waveform.samples.map((level, index) => <i key={index} style={{ height: `${Math.max(3, level * 100)}%` }} />)}</div> : <p className="hint">{waveform.error || 'Is video mein audio track nahi hai.'}</p>}{waveform.truncated && <small className="waveform-note">Preview is limited to the first 5 minutes.</small>}</div>}
         {info && <div className="metadata"><span>{info.width} × {info.height}</span><span>{info.duration.toFixed(1)} sec</span><span>{info.video_codec || 'Video'}</span><span>{info.has_audio ? 'Audio ✓' : 'No audio'}</span></div>}
       </div>
       <div className="panel controls"><div className="panel-head"><span>02 / EDIT TOOLS</span><span>QUICK CUT</span></div><h3>Trim your clip</h3><p className="hint">Video analysis detects duration, resolution, codecs and audio automatically.</p>
@@ -296,7 +311,7 @@ function App() {
         <p className="notice" role="status">{message}</p>
       </div>
     </section>
-    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.8.0</span></footer>
+    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.9.1</span></footer>
   </main>;
 }
 
