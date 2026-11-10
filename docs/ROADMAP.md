@@ -1,5 +1,12 @@
 # JARVIS AI Video Studio — roadmap
 
+## Implemented in 0.12.0
+- Added FFmpeg fade-in and fade-out effects for video, with matching audio fades when an audio stream exists
+- Added validation for negative, empty, and overlong combined fade durations
+- Added editor sliders and MP4 export action for fade effects
+- Added backend regression tests for fade validation and silent-video filter generation
+
+
 ## Implemented in 0.11.0
 - Added text overlays with seven screen positions and adjustable font size
 - Render text into MP4 using FFmpeg drawtext and a UTF-8 text file
@@ -55,10 +62,10 @@ The first caption request downloads Whisper's `base` model, so the server needs 
 
 ## Next milestones
 1. Add waveform/audio preview.
-2. Add text overlays and transitions.
+2. Add transitions between timeline clips and improve effects preview.
 3. Add project persistence and background export jobs.
 4. Add automated backend/frontend tests and deployment configuration.
 5. Package the mobile-friendly client as an Android app (Capacitor) after the web workflow is stable.
 
 ## Current limitations
-This is an early editor scaffold, not a full AI editor. The multi-clip timeline supports ordering, per-clip numeric IN/OUT trims, and joining; draggable visual handles are available for both the main single-video trim editor and each multi-clip timeline row; waveform preview is implemented for the main selected video; multi-clip per-row waveforms and audio mixing is implemented for the main selected video; multi-clip soundtrack mixing is not implemented yet. Voice recognition depends on browser support. Whisper captions are optional and are not ready until the AI requirements and model are installed on the server. Subtitle burn-in requires FFmpeg with the subtitles/libass filter available. APK packaging, authentication, and cloud deployment are not implemented yet. The API needs FFmpeg and FFprobe on the server. Automated backend API tests are configured in GitHub Actions; frontend build and real video playback/export still need verification.
+This is an early editor scaffold, not a full AI editor. The multi-clip timeline supports ordering, per-clip numeric IN/OUT trims, and joining; draggable visual handles are available for both the main single-video trim editor and each multi-clip timeline row; waveform preview is implemented for the main selected video; multi-clip per-row waveforms and audio mixing is implemented for the main selected video; multi-clip soundtrack mixing is not implemented yet. Voice recognition depends on browser support. Whisper captions are optional and are not ready until the AI requirements and model are installed on the server. Subtitle burn-in requires FFmpeg with the subtitles/libass filter available. APK packaging, authentication, and cloud deployment are not implemented yet. Fade effects re-encode video and audio, so export time depends on source length and server CPU. The API needs FFmpeg and FFprobe on the server. Automated backend API tests are configured in GitHub Actions; frontend build and real video playback/export still need verification.
