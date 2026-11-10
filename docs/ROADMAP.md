@@ -1,17 +1,18 @@
-# JARVIS Video Studio roadmap
+# JARVIS AI Video Studio — roadmap
 
-## MVP scaffold
+## Implemented in 0.2.0
 - Responsive React/Vite editor interface
 - FastAPI health and upload endpoints
-- FFmpeg trim/export endpoint
-- Docker image with FFmpeg installed
+- FFprobe metadata inspection (duration, dimensions, codecs, audio presence, file size)
+- FFmpeg trim/export with trim-range validation
+- Docker image with FFmpeg/FFprobe installed
 
 ## Next milestones
-1. Add timeline with multiple clips and draggable trim handles.
+1. Add a visual multi-clip timeline with draggable trim handles.
 2. Add text overlays, subtitle tracks, transitions, and audio mixing.
 3. Add speech-to-text captions (Whisper) and Hindi/English command parsing.
 4. Add project persistence and background export jobs.
 5. Package the mobile-friendly client as an Android app (Capacitor) after the web workflow is stable.
 
 ## Current limitations
-This is an initial working scaffold, not a complete AI editor. AI scene detection, auto-captions, multi-track editing, authentication, and Android APK packaging are not implemented yet. The API requires FFmpeg on the server for exports.
+This is an early editor scaffold, not a full AI editor. AI scene detection, auto-captions, multi-track editing, authentication, and Android APK packaging are not implemented yet. The API needs FFmpeg and FFprobe on the server.
