@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parent.parent
 MEDIA = ROOT / "media"
 MEDIA.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="JARVIS AI Video Studio API", version="0.10.0")
+app = FastAPI(title="JARVIS AI Video Studio API", version="0.11.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -59,7 +59,7 @@ def srt_time(seconds: float) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.10.0"}
+    return {"status": "ok", "service": "JARVIS AI Video Studio", "version": "0.11.0"}
 
 
 @app.post("/api/upload")
@@ -276,6 +276,70 @@ def burn_captions(payload: dict):
         raise HTTPException(status_code=422, detail=exc.stderr[-1500:] or "Subtitle burn-in failed")
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="Subtitle export timed out")
+    return {"filename": output_name, "url": f"/media/{output_name}"}
+
+
+
+
+@app.post("/api/export/text")
+def export_text_overlay(payload: dict):
+    """Render a user-supplied text overlay into a new MP4."""
+    source = get_media_file(payload.get("filename", ""))
+    overlay_text = str(payload.get("text", "")).strip()
+    if not overlay_text:
+        raise HTTPException(status_code=400, detail="Overlay text cannot be empty")
+    if len(overlay_text) > 300:
+        raise HTTPException(status_code=400, detail="Overlay text must be 300 characters or fewer")
+    try:
+        font_size = int(payload.get("font_size", 42))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Font size must be a whole number")
+    if not 16 <= font_size <= 96:
+        raise HTTPException(status_code=400, detail="Font size must be between 16 and 96")
+    positions = {
+        "top": "(w-text_w)/2:40",
+        "center": "(w-text_w)/2:(h-text_h)/2",
+        "bottom": "(w-text_w)/2:h-text_h-40",
+        "top-left": "40:40",
+        "top-right": "w-text_w-40:40",
+        "bottom-left": "40:h-text_h-40",
+        "bottom-right": "w-text_w-40:h-text_h-40",
+    }
+    position = str(payload.get("position", "bottom"))
+    if position not in positions:
+        raise HTTPException(status_code=400, detail="Unsupported text position")
+    info = run_ffprobe(source)
+    if not any(item.get("codec_type") == "video" for item in info.get("streams", [])):
+        raise HTTPException(status_code=422, detail="Source file has no video stream")
+    job = uuid.uuid4().hex[:8]
+    text_file = MEDIA / f"overlay-{job}.txt"
+    output_name = f"{source.stem}-text-{job}.mp4"
+    output = MEDIA / output_name
+    text_file.write_text(overlay_text, encoding="utf-8")
+    def escape_filter_path(path: Path) -> str:
+        return str(path.resolve()).replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+    font_file = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+    drawtext = (
+        f"drawtext=fontfile='{escape_filter_path(font_file)}':"
+        f"textfile='{escape_filter_path(text_file)}':fontcolor=white:fontsize={font_size}:"
+        f"x={positions[position].split(':', 1)[0]}:y={positions[position].split(':', 1)[1]}:"
+        "box=1:boxcolor=black@0.55:boxborderw=12"
+    )
+    command = [
+        "ffmpeg", "-y", "-i", str(source), "-vf", drawtext,
+        "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac",
+        "-movflags", "+faststart", str(output),
+    ]
+    try:
+        subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="FFmpeg is not installed on the server")
+    except subprocess.CalledProcessError as exc:
+        raise HTTPException(status_code=422, detail=exc.stderr[-1500:] or "Text overlay export failed")
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Text overlay export timed out")
+    finally:
+        text_file.unlink(missing_ok=True)
     return {"filename": output_name, "url": f"/media/{output_name}"}
 
 
