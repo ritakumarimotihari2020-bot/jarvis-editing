@@ -211,7 +211,7 @@ def export_timeline(payload: dict):
             subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
             normalized.append(normalized_file)
         concat_list.write_text(
-            "".join(f"file '{path.name}'\\n" for path in normalized), encoding="utf-8"
+            "".join(f"file '{path.name}'\n" for path in normalized), encoding="utf-8"
         )
         subprocess.run(
             ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_list),
