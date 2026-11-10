@@ -471,7 +471,7 @@ def export_timeline(payload: dict):
                 "-c:a", "aac", "-ar", "44100", "-ac", "2", "-shortest",
                 "-movflags", "+faststart", str(normalized_file),
             ]
-            _run_export_process(command, job_id=job_id, timeout=1800)
+            subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
             normalized.append(normalized_file)
         concat_list.write_text(
             "".join(f"file '{path.name}'
@@ -497,6 +497,8 @@ def export_timeline(payload: dict):
 
 def _run_export_process(command, job_id=None, timeout=1800):
     """Run an FFmpeg step that can be stopped by its owning export job."""
+    if not job_id:
+        return subprocess.run(command, check=True, capture_output=True, text=True, timeout=timeout)
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     if job_id:
         _export_processes[job_id] = process
@@ -589,7 +591,7 @@ def export_timeline_transition(payload: dict, job_id: str | None = None):
                 "-c:a", "aac", "-ar", "44100", "-ac", "2", "-t", str(trim_duration),
                 "-movflags", "+faststart", str(normalized_file),
             ]
-            subprocess.run(command, check=True, capture_output=True, text=True, timeout=1800)
+            _run_export_process(command, job_id=job_id, timeout=1800)
             normalized.append(normalized_file)
 
         graph = []
