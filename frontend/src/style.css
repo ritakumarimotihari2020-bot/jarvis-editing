@@ -63,3 +63,5 @@
 .overlay-label{display:block;margin:16px 0;color:#aab6ca;font:11px 'DM Mono',monospace;letter-spacing:.8px}
 .overlay-label select{font:13px Manrope}
 .text-overlay-box textarea:focus,.overlay-label select:focus{outline:1px solid #5ce5d4;border-color:#5ce5d4}
+
+.project-box .overlay-label input{display:block;width:100%;margin-top:9px;padding:12px;border:1px solid #35455e;border-radius:8px;background:#0b1321;color:#edf2ff;font:14px Manrope}.project-box .overlay-label input:focus{outline:1px solid #5ce5d4;border-color:#5ce5d4}.project-box .quiet{width:100%}
