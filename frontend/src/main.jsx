@@ -37,6 +37,7 @@ function App() {
   const [projectName, setProjectName] = useState('My JARVIS Edit');
   const [exportJob, setExportJob] = useState(null);
   const [activeExportJobId, setActiveExportJobId] = useState('');
+  const [exportHistory, setExportHistory] = useState([]);
 
 
 
@@ -251,6 +252,15 @@ function App() {
       setExportJob(current => ({ ...(current || {}), status: 'failed', message: err.message }));
       setMessage(err.message);
     } finally { setActiveExportJobId(''); setBusy(false); }
+  }
+
+  async function refreshExportHistory() {
+    try {
+      const res = await fetch(API + '/api/export/jobs?limit=20');
+      const body = await res.json();
+      if (!res.ok) throw new Error(body.detail || 'Could not load export history');
+      setExportHistory(body.jobs || []);
+    } catch (err) { setMessage(err.message); }
   }
 
   async function cancelExportJob() {
@@ -549,10 +559,11 @@ function App() {
           <button className="primary" disabled={busy || timelineFiles.length < 2} onClick={exportTimelineWithTransitions}>EXPORT WITH {timelineTransition.toUpperCase()} TRANSITIONS</button>
         </div>
         {exportJob && <div className="export-job" role="status"><div className="export-job-head"><strong>BACKGROUND EXPORT</strong><span>{exportJob.status.toUpperCase()} · {exportJob.progress || 0}%</span></div><div className="export-progress"><i style={{ width: (exportJob.progress || 0) + '%' }} /></div><small>{exportJob.message}</small>{activeExportJobId && <button type="button" className="quiet cancel-export" onClick={cancelExportJob}>CANCEL EXPORT</button>}</div>
+        <div className="export-history"><div className="export-history-head"><strong>EXPORT HISTORY</strong><button type="button" className="quiet" onClick={refreshExportHistory}>REFRESH HISTORY</button></div>{exportHistory.length ? <ul>{exportHistory.map(job => <li key={job.id}><span><strong>{job.status.toUpperCase()}</strong><small>{job.message}</small></span><small>{job.created_at ? new Date(job.created_at).toLocaleString() : job.id.slice(0, 8)}</small>{job.result?.url && <a href={API + job.result.url} target="_blank" rel="noreferrer">OPEN</a>}</li>)}</ul> : <small>No saved export history loaded. Tap refresh.</small>}</div>
         <p className="notice" role="status">{message}</p>
       </div>
     </section>
-    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.16.0</span></footer>
+    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.17.0</span></footer>
   </main>;
 }
 
