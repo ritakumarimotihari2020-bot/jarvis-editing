@@ -71,3 +71,40 @@
 .cancel-export{width:100%;margin-top:12px;border-color:#8a5260;color:#ffb4c0}.cancel-export:disabled{opacity:.5;cursor:not-allowed}
 
 .export-history{margin-top:18px;padding:16px;border:1px solid var(--line,#29313d);border-radius:14px;background:rgba(255,255,255,.02)}.export-history-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.export-history ul{list-style:none;padding:0;margin:12px 0 0}.export-history li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--line,#29313d)}.export-history li span{display:grid;gap:4px}.export-history li small{opacity:.7}.export-history li a{color:var(--accent,#9ee7d7);font-size:12px;font-weight:700}
+
+
+/* Mobile and Capacitor WebView refinements */
+html{min-height:100%;background:#090d18;overscroll-behavior-y:contain}
+body{min-height:100dvh;padding-bottom:env(safe-area-inset-bottom);-webkit-text-size-adjust:100%;touch-action:pan-y}
+button,.quiet,.primary,.drop,.timeline-add,.music-picker,select,input[type=range]{touch-action:manipulation}
+button,.quiet,.primary{min-height:44px}
+input,textarea,select{font-size:16px}
+video{max-width:100%;object-fit:contain}
+.panel,.export-job,.export-history,.visual-trim{scroll-margin-top:12px}
+@media(max-width:760px){
+  .shell{width:100%;padding:calc(14px + env(safe-area-inset-top)) 12px calc(18px + env(safe-area-inset-bottom))}
+  header{gap:10px;align-items:flex-start}
+  .brand{gap:10px;min-width:0}
+  .orb{width:40px;height:40px;flex:0 0 40px}
+  h1{font-size:14px;letter-spacing:1px}
+  .status{font-size:9px;letter-spacing:.7px;white-space:nowrap}
+  .hero{padding:42px 2px 24px}
+  .hero h2{font-size:clamp(38px,12vw,58px);letter-spacing:-2px}
+  .sub{font-size:14px}
+  .workspace{grid-template-columns:minmax(0,1fr);gap:12px}
+  .panel{padding:14px;border-radius:13px}
+  .drop{min-height:180px;padding:16px}
+  .preview video{max-height:48vh}
+  .controls h3{font-size:20px}
+  .controls label{margin:16px 0}
+  .input-wrap input{min-width:0}
+  .timeline-list li{flex-wrap:wrap}
+  .timeline-actions{width:100%;justify-content:flex-end}
+  .timeline-trim{flex-wrap:wrap}
+  .timeline-trim label{flex:1 1 120px}
+  .timeline-trim input{width:100%;min-width:0}
+  .export-history li{align-items:flex-start;flex-wrap:wrap}
+  .export-history li>small{width:100%;order:2}
+  .export-history li a{margin-left:auto}
+  footer{gap:10px;flex-wrap:wrap;margin-top:30px;padding-bottom:env(safe-area-inset-bottom)}
+}
