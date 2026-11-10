@@ -232,3 +232,26 @@ def test_fade_builds_video_filter_for_silent_video(tmp_path, monkeypatch):
     assert "fade=t=in:st=0:d=1.5" in graph
     assert "fade=t=out:st=8.0:d=2.0" in graph
     assert "[a]" not in graph
+
+
+def test_fade_applies_matching_audio_filters_when_audio_exists(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(main, "MEDIA", tmp_path)
+    monkeypatch.setattr(main, "run_ffprobe", lambda _source: {
+        "streams": [{"codec_type": "video"}, {"codec_type": "audio"}],
+        "format": {"duration": "8"},
+    })
+    captured = {}
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        Path(command[-1]).write_bytes(b"rendered")
+    monkeypatch.setattr(main.subprocess, "run", fake_run)
+    response = client.post("/api/export/fade", json={
+        "filename": source.name, "fade_in": 1, "fade_out": 1
+    })
+    assert response.status_code == 200
+    graph = captured["command"][captured["command"].index("-filter_complex") + 1]
+    assert "afade=t=in:st=0:d=1.0" in graph
+    assert "afade=t=out:st=7.0:d=1.0" in graph
+    assert "[a]" in graph
