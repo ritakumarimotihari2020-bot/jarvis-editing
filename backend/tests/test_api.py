@@ -15,7 +15,7 @@ def test_health_reports_current_api_version():
     assert response.json() == {
         "status": "ok",
         "service": "JARVIS AI Video Studio",
-        "version": "0.8.0",
+        "version": "0.9.1",
     }
 
 
@@ -57,3 +57,19 @@ def test_timeline_requires_at_least_two_clips():
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Timeline needs between 2 and 20 clips"
+
+
+
+def test_waveform_reports_video_without_audio(tmp_path, monkeypatch):
+    source = tmp_path / "silent.mp4"
+    source.write_bytes(b"placeholder")
+    monkeypatch.setattr(main, "MEDIA", tmp_path)
+    monkeypatch.setattr(main, "run_ffprobe", lambda _source: {
+        "format": {"duration": "12"}, "streams": [{"codec_type": "video"}]
+    })
+
+    response = client.get(f"/api/video/{source.name}/waveform")
+
+    assert response.status_code == 200
+    assert response.json()["has_audio"] is False
+    assert response.json()["samples"] == []
