@@ -253,6 +253,8 @@ function App() {
   }
 
   const maxDuration = info?.duration ? Math.max(0.1, info.duration - Number(start || 0)) : 3600;
+  const trimEnd = Number(start || 0) + Number(duration || 0);
+  const clipDuration = info?.duration || 0;
 
   return <main className="shell">
     <header><div className="brand"><span className="orb">J</span><div><p className="eyebrow">PERSONAL CREATIVE ASSISTANT</p><h1>JARVIS <em>VIDEO STUDIO</em></h1></div></div><span className="status"><i /> EDITOR READY</span></header>
@@ -265,6 +267,15 @@ function App() {
         {info && <div className="metadata"><span>{info.width} × {info.height}</span><span>{info.duration.toFixed(1)} sec</span><span>{info.video_codec || 'Video'}</span><span>{info.has_audio ? 'Audio ✓' : 'No audio'}</span></div>}
       </div>
       <div className="panel controls"><div className="panel-head"><span>02 / EDIT TOOLS</span><span>QUICK CUT</span></div><h3>Trim your clip</h3><p className="hint">Video analysis detects duration, resolution, codecs and audio automatically.</p>
+        {info?.duration > 0 && <div className="visual-trim" aria-label="Visual trim range">
+          <div className="visual-trim-labels"><span>0:00</span><strong>SELECTED RANGE</strong><span>{info.duration.toFixed(1)}s</span></div>
+          <div className="visual-trim-track">
+            <div className="visual-trim-selection" style={{ left: (Math.min(100, Math.max(0, Number(start) / clipDuration * 100))) + '%', width: (Math.max(0, Math.min(100, trimEnd / clipDuration * 100) - Math.min(100, Math.max(0, Number(start) / clipDuration * 100))) + '%' }} />
+            <input aria-label="Drag trim start handle" className="trim-range trim-start" type="range" min="0" max={clipDuration} step="0.1" value={Math.min(clipDuration, Math.max(0, Number(start) || 0))} onChange={e => { const next = Number(e.target.value); setStart(String(next)); if (trimEnd <= next) setDuration(String(Math.max(0.1, clipDuration - next))); }} />
+            <input aria-label="Drag trim end handle" className="trim-range trim-end" type="range" min="0.1" max={clipDuration} step="0.1" value={Math.min(clipDuration, Math.max(0.1, trimEnd))} onChange={e => { const next = Number(e.target.value); if (next > Number(start)) setDuration(String((next - Number(start)).toFixed(1))); }} />
+          </div>
+          <p className="hint">Dono handles ko drag karke video ka start aur end select karein.</p>
+        </div>}
         <label>START TIME <div className="input-wrap"><input type="number" min="0" max={info?.duration || 3600} step="0.1" value={start} onChange={e => setStart(e.target.value)} /><span>seconds</span></div></label>
         <label>DURATION <div className="input-wrap"><input type="number" min="0.1" max={maxDuration} step="0.1" value={duration} onChange={e => setDuration(e.target.value)} /><span>seconds</span></div><button type="button" className="quiet" onClick={setTrimStartToPlayhead}>SET START TO PLAYHEAD</button></label>
         <label>END POINT <div className="input-wrap"><span>Seek video, then tap below</span></div><button type="button" className="quiet" onClick={setTrimEndToPlayhead}>SET END TO PLAYHEAD</button></label>
@@ -281,7 +292,7 @@ function App() {
         <p className="notice" role="status">{message}</p>
       </div>
     </section>
-    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.7.0</span></footer>
+    <footer><span>J.A.R.V.I.S. · VIDEO STUDIO</span><span>BUILD 0.8.0</span></footer>
   </main>;
 }
 
