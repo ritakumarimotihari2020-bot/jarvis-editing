@@ -15,7 +15,7 @@ def test_health_reports_current_api_version():
     assert response.json() == {
         "status": "ok",
         "service": "JARVIS AI Video Studio",
-        "version": "0.10.0",
+        "version": "0.11.0",
     }
 
 
@@ -104,3 +104,37 @@ def test_audio_upload_rejects_video_file():
 
     assert response.status_code == 415
     assert response.json()["detail"] == "Unsupported audio format"
+
+
+
+def test_text_overlay_rejects_empty_text_before_ffmpeg(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(main, "MEDIA", tmp_path)
+    response = client.post("/api/export/text", json={
+        "filename": source.name, "text": "   "
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Overlay text cannot be empty"
+
+
+def test_text_overlay_rejects_invalid_position_before_ffmpeg(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(main, "MEDIA", tmp_path)
+    response = client.post("/api/export/text", json={
+        "filename": source.name, "text": "Hello", "position": "outside"
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Unsupported text position"
+
+
+def test_text_overlay_rejects_font_size_out_of_range(tmp_path, monkeypatch):
+    source = tmp_path / "source.mp4"
+    source.write_bytes(b"video")
+    monkeypatch.setattr(main, "MEDIA", tmp_path)
+    response = client.post("/api/export/text", json={
+        "filename": source.name, "text": "Hello", "font_size": 120
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Font size must be between 16 and 96"
