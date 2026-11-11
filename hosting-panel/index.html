@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#10151d"><meta name="description" content="Ayansh Hosting — Minecraft server control panel">
+  <title>Ayansh Hosting | Minecraft Panel</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar">
+      <a class="brand" href="#"><span class="brand-mark">A</span><span>AYANSH<span class="brand-sub">HOSTING</span></span></a>
+      <div class="side-label">WORKSPACE</div>
+      <a class="nav active" href="#overview">▦ <span>Overview</span></a>
+      <a class="nav" href="#console">⌘ <span>Console</span></a>
+      <a class="nav" href="#software">◈ <span>Software</span></a>
+      <a class="nav" href="#files">▤ <span>Files</span></a>
+      <a class="nav" href="#players">♙ <span>Players</span></a>
+      <div class="side-bottom"><div class="profile"><div class="avatar">A</div><div><b>Server Owner</b><small>Free plan · Demo</small></div><span class="dots">•••</span></div></div>
+    </aside>
+    <main class="main">
+      <header class="topbar"><button class="menu" id="menu" aria-label="Toggle menu">☰</button><div class="crumb">Servers <span>/</span> Survival SMP</div><div class="top-actions"><span class="demo-pill">FRONTEND DEMO</span><div class="avatar small">A</div></div></header>
+      <section class="content" id="overview">
+        <div class="welcome"><div><div class="eyebrow">YOUR CONTROL CENTER</div><h1>Survival SMP</h1><p>Manage your Minecraft world from one place.</p></div><button class="outline" id="copyIp">Copy server address</button></div>
+        <div class="notice"><span>ⓘ</span><div><b>Preview mode</b><p>This is the panel interface only. Connect a server backend to make Start, Stop, Console and file actions control a real Minecraft server.</p></div></div>
+        <div class="stats">
+          <article class="stat"><div class="stat-head">SERVER STATUS <span class="status-dot"></span></div><div class="stat-value" id="status">Offline</div><div class="stat-foot" id="statusFoot">Ready to start · Demo</div></article>
+          <article class="stat"><div class="stat-head">PLAYERS ONLINE</div><div class="stat-value">0 <small>/ 20</small></div><div class="stat-foot">No players connected</div></article>
+          <article class="stat"><div class="stat-head">MEMORY</div><div class="stat-value">0 <small>MB / 2 GB</small></div><div class="meter"><i style="width:2%"></i></div></article>
+          <article class="stat"><div class="stat-head">SOFTWARE</div><div class="stat-value">Paper</div><div class="stat-foot">Minecraft 1.21.4</div></article>
+        </div>
+        <div class="section-title"><div><h2>Server controls</h2><p>Manage your instance</p></div><span class="tag">SURVIVAL-01</span></div>
+        <div class="control-card">
+          <div class="server-identity"><div class="cube">▦</div><div><b>Survival SMP</b><small>Java Edition · Paper 1.21.4</small></div><span class="state" id="stateBadge">OFFLINE</span></div>
+          <div class="control-buttons"><button class="btn start" id="start">▶ Start</button><button class="btn stop" id="stop">■ Stop</button><button class="btn restart" id="restart">↻ Restart</button></div>
+          <div class="server-address"><div><small>SERVER ADDRESS</small><b id="serverIp">play.ayansh-hosting.example:25565</b></div><button class="copy" id="copyIp2">Copy</button></div>
+        </div>
+        <div class="lower-grid">
+          <section class="panel" id="console"><div class="panel-head"><div><h2>Live console</h2><p>Recent server output</p></div><span class="live-label">● DEMO LOG</span></div><div class="terminal" id="terminal"><p><i>[Panel]</i> Welcome to Ayansh Hosting.</p><p><i>[Panel]</i> Backend is not connected.</p><p><i>[Panel]</i> Connect a trusted server agent to enable live console.</p></div><form class="command" id="commandForm"><span>›</span><input id="command" placeholder="Console is preview-only" disabled><button disabled>Send</button></form></section>
+          <section class="panel" id="software"><div class="panel-head"><div><h2>Quick settings</h2><p>Instance configuration</p></div></div><div class="setting"><span>Server type</span><b>Paper <span class="muted">⌄</span></b></div><div class="setting"><span>Game version</span><b>1.21.4 <span class="muted">⌄</span></b></div><div class="setting"><span>Max players</span><b>20</b></div><div class="setting"><span>Auto-restart</span><b class="green">Not configured</b></div><div class="setting"><span>Backups</span><b>Not configured</b></div></section>
+        </div>
+        <div class="footer">AYANSH HOSTING <span>Built for your Minecraft community · Panel preview</span></div>
+      </section>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="app.js"></script>
+</body></html>
